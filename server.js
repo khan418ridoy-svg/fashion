@@ -80,8 +80,9 @@ app.use(helmet({
       ],
 
       styleSrc: [
-        "'self'",
-        "'unsafe-inline'"
+         "'self'",
+      "'unsafe-inline'",
+      'https://cdnjs.cloudflare.com'
       ],
 
       fontSrc: [
