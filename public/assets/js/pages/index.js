@@ -9,9 +9,10 @@ import {
 // ========================================
 // Page Configuration
 // ========================================
-
 const PAGE_MODULES = {
   dashboard: () => import('./dashboard.js'),
+  products: () => import('./product/index.js'),
+  lots: () => import('./product/lot/list-page.js'),
   collections: () => import('./collections.js'),
   categories: () => import('./categories.js'),
   subcategories: () => import('./subcategories.js')

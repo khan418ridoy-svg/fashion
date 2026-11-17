@@ -29,6 +29,8 @@ const APP_CONFIG = {
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
+  products: 'Products',
+  lots: 'Purchase Lots',
   collections: 'Collections',
   categories: 'Categories',
   subcategories: 'Subcategories'
@@ -182,7 +184,10 @@ function renderAdminLayout(admin) {
     }
   });
 
+  // ======================================
   // Brand
+  // ======================================
+
   const brand = createElement('div', {
     className: 'sidebar-brand'
   });
@@ -201,7 +206,10 @@ function renderAdminLayout(admin) {
     brandName
   );
 
+  // ======================================
   // Navigation
+  // ======================================
+
   const navigation = createElement('nav', {
     className: 'sidebar-navigation',
     attributes: {
@@ -224,6 +232,37 @@ function renderAdminLayout(admin) {
     }
   });
 
+  // ======================================
+  // Products Link
+  // ======================================
+
+  const productsLink = createElement('a', {
+    className: 'sidebar-link',
+    text: '▣ Products',
+    attributes: {
+      href: '#products'
+    },
+    dataset: {
+      page: 'products'
+    }
+  });
+
+
+
+  // ======================================
+// Purchase Lots Link
+// ======================================
+
+const lotsLink = createElement('a', {
+  className: 'sidebar-link',
+  text: '▤ Purchase Lots',
+  attributes: {
+    href: '#lots'
+  },
+  dataset: {
+    page: 'lots'
+  }
+});
   // ======================================
   // Collections Group
   // ======================================
@@ -310,9 +349,14 @@ function renderAdminLayout(admin) {
     submenu
   );
 
-  // Add navigation items
+  // ======================================
+  // Add Navigation Items
+  // ======================================
+
   navigation.append(
     dashboardLink,
+    productsLink,
+    lotsLink,
     collectionsGroup
   );
 
