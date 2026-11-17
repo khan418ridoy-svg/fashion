@@ -609,7 +609,10 @@ async function loadCollections({ forceRefresh = false } = {}) {
 // ========================================
 
 function closeModal() {
-  getElement('.modal-overlay.active')?.remove();
+  document
+    .querySelector('#subcategory-modal-overlay')
+    ?.remove();
+
   isSaving = false;
 }
 
@@ -652,10 +655,10 @@ function openSubcategoryModal(item = null) {
 
   closeModal();
 
-  const overlay = createElement('div', {
-    className: 'modal-overlay active'
-  });
-
+const overlay = createElement('div', {
+  className: 'modal-overlay active',
+  id: 'subcategory-modal-overlay'
+});
   const modal = createElement('div', {
     className: 'modal',
     attributes: {
@@ -1036,9 +1039,9 @@ function openSubcategoryModal(item = null) {
     }
   });
 
-  getElement('#subcategories-page')?.appendChild(overlay);
+document.body.appendChild(overlay);
 
-  nameInput.focus();
+nameInput.focus();
 }
 
 // ========================================
@@ -1296,9 +1299,14 @@ export function bindEvents() {
 
   searchInput?.addEventListener('input', refreshList);
 
-  addButton?.addEventListener('click', () => {
-    openSubcategoryModal();
-  });
+ addButton?.addEventListener('click', () => {
+  if (!collectionsData.length) {
+    notify('Please create a Collection first.', 'warning');
+    return;
+  }
+
+  openSubcategoryModal();
+});
 
   list?.addEventListener('click', event => {
     const button = event.target.closest('[data-action]');
