@@ -1,401 +1,690 @@
 
 'use strict';
 
-import { createElement, showToast, confirmAction } from '../helpers.js';
+import {
+  createElement,
+  showToast,
+  confirmAction
+} from '../helpers.js';
+
 import { api } from '../api.js';
+
+// ========================================
+// Font Awesome
+// ========================================
+
+function loadFontAwesome() {
+  if (document.querySelector('link[data-font-awesome]')) return;
+
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css';
+  link.dataset.fontAwesome = 'true';
+
+  document.head.appendChild(link);
+}
 
 // ========================================
 // State
 // ========================================
 
 let pageElement = null;
-
 let collectionsData = [];
-let categoriesData = [];
-let subcategoriesData = [];
-
+let allSubcategories = [];
 let isSaving = false;
 
 // ========================================
-// Helpers
+// General Helpers
 // ========================================
 
 function getElement(selector) {
-  return pageElement?.querySelector(selector);
+  return pageElement?.querySelector(selector) || null;
 }
 
-function createMessage(message, type = 'info') {
-  return createElement('div', {
-    className: `message message-${type}`,
-    text: message
-  });
+function notify(message, type = 'info') {
+  showToast(message, type);
 }
 
-function notify(message, type = 'success') {
-  if (typeof showToast === 'function') {
-    showToast(message, type);
-  } else {
-    alert(message);
-  }
-}
-
-function getSelectedCollection() {
-  const select = getElement('#subcategory-collection');
-
-  return collectionsData.find(
-    item => item.id === select?.value
-  ) || null;
-}
-
-function getSelectedCategory() {
-  const select = getElement('#subcategory-category');
-
-  return categoriesData.find(
-    item => item.id === select?.value
-  ) || null;
+function getCategories(collection) {
+  return Array.isArray(collection?.categories)
+    ? collection.categories
+    : [];
 }
 
 function getSubcategoryItems(category) {
-  const items =
-    category?.subCategories ??
-    category?.subcategories;
-
+  const items = category?.subCategories ?? category?.subcategories;
   return Array.isArray(items) ? items : [];
 }
 
-function createSubcategoryId(name, categoryId) {
-  const slug = String(name)
+function getSelectedCollectionId() {
+  return getElement('#subcategory-collection')?.value || '';
+}
+
+function getSelectedCategoryId() {
+  return getElement('#subcategory-category')?.value || '';
+}
+
+function getSelectedCollection() {
+  const id = getSelectedCollectionId();
+
+  return collectionsData.find(item => item.id === id) || null;
+}
+
+function getSelectedCategory() {
+  const collection = getSelectedCollection();
+  const categoryId = getSelectedCategoryId();
+
+  return getCategories(collection).find(
+    item => item.id === categoryId
+  ) || null;
+}
+
+function createMessage(className, titleText, descriptionText) {
+  const wrapper = createElement('div', { className });
+
+  wrapper.append(
+    createElement('h3', { text: titleText }),
+    createElement('p', { text: descriptionText })
+  );
+
+  return wrapper;
+}
+
+function slugify(value = '') {
+  return String(value)
     .trim()
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, '-')
     .replace(/^-+|-+$/g, '');
+}
 
-  return `${categoryId}-${slug}`;
+function createSubcategoryId(name, categoryId) {
+  const slug = slugify(name);
+
+  if (!slug) return '';
+
+  return `${categoryId}-${slug}`.slice(0, 128);
 }
 
 // ========================================
-// Load Taxonomy
+// Icon Helpers
 // ========================================
 
-async function loadCollections() {
+function isFontAwesomeIcon(value = '') {
+  const classes = String(value).trim().split(/\s+/);
+
+  const validStyles = [
+    'fa-solid',
+    'fa-regular',
+    'fa-brands',
+    'fa-light',
+    'fa-thin',
+    'fa-duotone',
+    'fas',
+    'far',
+    'fab',
+    'fal',
+    'fat'
+  ];
+
+  return (
+    classes.length >= 2 &&
+    validStyles.includes(classes[0]) &&
+    classes.every(className =>
+      /^fa-[a-z0-9-]+$/i.test(className) ||
+      validStyles.includes(className)
+    )
+  );
+}
+
+function renderIconContent(container, iconValue = '', fallback = '📁') {
+  container.replaceChildren();
+
+  const value = String(iconValue || '').trim();
+
+  if (isFontAwesomeIcon(value)) {
+    container.appendChild(
+      createElement('i', {
+        className: value,
+        attributes: {
+          'aria-hidden': 'true'
+        }
+      })
+    );
+
+    return;
+  }
+
+  container.textContent = value || fallback;
+}
+
+function createParentChip(iconValue, label, fallback = '📁') {
+  const chip = createElement('span', {
+    className: 'subcategory-parent-chip'
+  });
+
+  const icon = createElement('span', {
+    className: 'subcategory-chip-icon',
+    attributes: {
+      'aria-hidden': 'true'
+    }
+  });
+
+  renderIconContent(icon, iconValue, fallback);
+
+  const text = createElement('span', {
+    className: 'subcategory-chip-text',
+    text: label || 'Unknown'
+  });
+
+  chip.append(icon, text);
+
+  return chip;
+}
+
+// ========================================
+// Flatten Taxonomy
+// ========================================
+
+function buildSubcategoryList() {
+  allSubcategories = [];
+
+  collectionsData.forEach(collection => {
+    getCategories(collection).forEach(category => {
+      getSubcategoryItems(category).forEach(subcategory => {
+        allSubcategories.push({
+          ...subcategory,
+
+          _collectionId: collection.id,
+          _collectionName: collection.name || collection.id,
+          _collectionIcon: collection.icon || '',
+
+          _categoryId: category.id,
+          _categoryName: category.name || category.id,
+          _categoryIcon: category.icon || ''
+        });
+      });
+    });
+  });
+}
+
+// ========================================
+// Filter Options
+// ========================================
+
+function setCollectionOptions(selectedId = '') {
   const select = getElement('#subcategory-collection');
-  const list = getElement('#subcategory-list');
 
-  if (!select || !list) return;
+  if (!select) return;
 
-  select.disabled = true;
-  list.replaceChildren(
-    createMessage('Loading collections...')
+  select.replaceChildren();
+
+  select.appendChild(
+    createElement('option', {
+      text: 'All Collections',
+      attributes: { value: '' }
+    })
   );
 
-  try {
-    const response = await api.taxonomy.load();
-
-    if (!Array.isArray(response?.collections)) {
-      throw new Error('Invalid collections response.');
-    }
-
-    collectionsData = response.collections;
-
-    select.replaceChildren();
-
-    select.append(
+  collectionsData.forEach(collection => {
+    select.appendChild(
       createElement('option', {
-        text: 'Select Collection',
-        attributes: { value: '' }
+        text: collection.name || collection.id,
+        attributes: { value: collection.id }
       })
     );
+  });
 
-    collectionsData.forEach(collection => {
-      select.append(
-        createElement('option', {
-          text: `${collection.icon || ''} ${collection.name}`,
-          attributes: { value: collection.id }
-        })
-      );
+  select.value = collectionsData.some(item => item.id === selectedId)
+    ? selectedId
+    : '';
+
+  select.disabled = collectionsData.length === 0;
+}
+
+function setCategoryOptions(selectedId = '') {
+  const select = getElement('#subcategory-category');
+
+  if (!select) return;
+
+  const collectionId = getSelectedCollectionId();
+
+  const collections = collectionId
+    ? collectionsData.filter(item => item.id === collectionId)
+    : collectionsData;
+
+  const categories = collections.flatMap(collection =>
+    getCategories(collection).map(category => ({
+      ...category,
+      _collectionId: collection.id
+    }))
+  );
+
+  select.replaceChildren();
+
+  select.appendChild(
+    createElement('option', {
+      text: 'All Categories',
+      attributes: { value: '' }
+    })
+  );
+
+  categories.forEach(category => {
+    const option = createElement('option', {
+      text: category.name || category.id,
+      attributes: { value: category.id }
     });
 
-    select.disabled = collectionsData.length === 0;
+    // Category ID may repeat in different collections.
+    option.dataset.collectionId = category._collectionId;
 
-    list.replaceChildren(
-      createMessage(
-        collectionsData.length
-          ? 'প্রথমে Collection নির্বাচন করুন।'
-          : 'কোনো Collection পাওয়া যায়নি।'
-      )
+    select.appendChild(option);
+  });
+
+  const matchingOption = Array.from(select.options).find(option =>
+    option.value === selectedId &&
+    (
+      !collectionId ||
+      option.dataset.collectionId === collectionId
+    )
+  );
+
+  select.value = matchingOption ? selectedId : '';
+  select.disabled = categories.length === 0;
+}
+
+function updateFilterOptions({
+  collectionId = getSelectedCollectionId(),
+  categoryId = getSelectedCategoryId()
+} = {}) {
+  setCollectionOptions(collectionId);
+  setCategoryOptions(categoryId);
+}
+
+// ========================================
+// Filtering
+// ========================================
+
+function getFilteredSubcategories() {
+  const collectionId = getSelectedCollectionId();
+  const categoryId = getSelectedCategoryId();
+
+  const keyword = (
+    getElement('#subcategory-search')?.value || ''
+  ).trim().toLowerCase();
+
+  return allSubcategories.filter(item => {
+    const matchesCollection =
+      !collectionId || item._collectionId === collectionId;
+
+    const matchesCategory =
+      !categoryId || item._categoryId === categoryId;
+
+    const searchableText = [
+      item.name,
+      item.id,
+      item._collectionName,
+      item._categoryName
+    ].join(' ').toLowerCase();
+
+    const matchesSearch =
+      !keyword || searchableText.includes(keyword);
+
+    return (
+      matchesCollection &&
+      matchesCategory &&
+      matchesSearch
     );
+  });
+}
 
-  } catch (error) {
-    console.error('[Subcategories Load]', error);
+// ========================================
+// Summary
+// ========================================
 
-    list.replaceChildren(
-      createMessage(
-        error.message || 'Collection load failed.',
-        'error'
-      )
+function renderSummary(items) {
+  const total = getElement('#subcategory-total');
+  const active = getElement('#subcategory-active');
+  const inactive = getElement('#subcategory-inactive');
+
+  if (total) total.textContent = String(items.length);
+
+  if (active) {
+    active.textContent = String(
+      items.filter(item => item.active !== false).length
     );
+  }
 
-    const retry = createElement('button', {
-      className: 'btn btn-primary',
-      text: 'Retry',
-      attributes: { type: 'button' }
-    });
-
-    retry.addEventListener('click', loadCollections);
-
-    list.append(retry);
-
-  } finally {
-    if (select.isConnected) {
-      select.disabled = collectionsData.length === 0;
-    }
+  if (inactive) {
+    inactive.textContent = String(
+      items.filter(item => item.active === false).length
+    );
   }
 }
 
 // ========================================
-// Collection Change
-// ========================================
-
-function updateSelectedCollection() {
-  const collection = getSelectedCollection();
-
-  categoriesData = Array.isArray(collection?.categories)
-    ? collection.categories
-    : [];
-
-  subcategoriesData = [];
-
-  const categorySelect = getElement('#subcategory-category');
-
-  if (categorySelect) {
-    categorySelect.replaceChildren();
-
-    categorySelect.append(
-      createElement('option', {
-        text: 'Select Category',
-        attributes: { value: '' }
-      })
-    );
-
-    categoriesData.forEach(category => {
-      categorySelect.append(
-        createElement('option', {
-          text: `${category.icon || ''} ${category.name}`,
-          attributes: { value: category.id }
-        })
-      );
-    });
-
-    categorySelect.disabled = categoriesData.length === 0;
-  }
-
-  renderSubcategoryList([]);
-
-  updateAddButton();
-}
-
-// ========================================
-// Category Change
-// ========================================
-
-function updateSelectedCategory() {
-  const category = getSelectedCategory();
-
-  subcategoriesData = getSubcategoryItems(category);
-
-  const search = getElement('#subcategory-search');
-
-  if (search) search.value = '';
-
-  renderSubcategoryList(subcategoriesData);
-
-  updateAddButton();
-}
-
-// ========================================
-// Add Button State
-// ========================================
-
-function updateAddButton() {
-  const button = getElement('#add-subcategory-btn');
-
-  if (!button) return;
-
-  button.disabled = !(
-    getSelectedCollection() &&
-    getSelectedCategory()
-  );
-}
-
-// ========================================
-// Render Subcategory Item
+// Render Subcategory Card
 // ========================================
 
 function renderSubcategoryItem(item) {
   const card = createElement('article', {
-    className: 'subcategory-item'
+    className: 'subcategory-card',
+    dataset: {
+      subcategoryId: item.id || '',
+      collectionId: item._collectionId || '',
+      categoryId: item._categoryId || ''
+    }
   });
 
-  const info = createElement('div', {
-    className: 'subcategory-info'
+  // Header
+  const header = createElement('div', {
+    className: 'subcategory-card-header'
   });
+
+  const icon = createElement('div', {
+    className: 'subcategory-icon',
+    attributes: { 'aria-hidden': 'true' }
+  });
+
+  renderIconContent(icon, item.icon, '📁');
 
   const title = createElement('div', {
-    className: 'subcategory-title'
+    className: 'subcategory-card-title'
   });
 
   title.append(
-    createElement('span', {
-      className: 'subcategory-icon',
-      text: item.icon || '📁'
-    }),
     createElement('h3', {
       className: 'subcategory-name',
-      text: item.name || 'Unnamed'
-    })
-  );
-
-  info.append(
-    title,
+      text: item.name || 'Unnamed Subcategory'
+    }),
     createElement('p', {
       className: 'subcategory-id',
-      text: `ID: ${item.id}`
+      text: `ID: ${item.id || 'N/A'}`
     })
   );
 
   const status = createElement('span', {
-    className: `status-badge ${
-      item.active ? 'status-active' : 'status-inactive'
-    }`,
-    text: item.active ? 'Active' : 'Inactive'
+    className: item.active === false
+      ? 'status-badge status-inactive'
+      : 'status-badge status-active',
+    text: item.active === false ? 'Inactive' : 'Active'
   });
 
-  const actions = createElement('div', {
-    className: 'subcategory-actions'
+  header.append(icon, title, status);
+
+  // Parent information
+  const parentInfo = createElement('div', {
+    className: 'subcategory-parent-info'
+  });
+
+  const collectionRow = createElement('div', {
+    className: 'subcategory-parent-row'
+  });
+
+  collectionRow.append(
+    createElement('span', {
+      className: 'subcategory-parent-label',
+      text: 'Collection'
+    }),
+    createParentChip(
+      item._collectionIcon,
+      item._collectionName,
+      '📁'
+    )
+  );
+
+  const categoryRow = createElement('div', {
+    className: 'subcategory-parent-row'
+  });
+
+  categoryRow.append(
+    createElement('span', {
+      className: 'subcategory-parent-label',
+      text: 'Category'
+    }),
+    createParentChip(
+      item._categoryIcon,
+      item._categoryName,
+      '📂'
+    )
+  );
+
+  parentInfo.append(collectionRow, categoryRow);
+
+  // Footer actions
+  const footer = createElement('div', {
+    className: 'subcategory-card-footer'
   });
 
   const editButton = createElement('button', {
-    className: 'btn btn-secondary btn-sm',
+    className: 'subcategory-action-btn edit',
     text: 'Edit',
     attributes: {
       type: 'button',
       'data-action': 'edit',
-      'data-id': item.id
+      'data-id': item.id,
+      'data-collection-id': item._collectionId,
+      'data-category-id': item._categoryId
     }
   });
 
   const deleteButton = createElement('button', {
-    className: 'btn btn-danger btn-sm',
+    className: 'subcategory-action-btn delete',
     text: 'Delete',
     attributes: {
       type: 'button',
       'data-action': 'delete',
-      'data-id': item.id
+      'data-id': item.id,
+      'data-collection-id': item._collectionId,
+      'data-category-id': item._categoryId
     }
   });
 
-  actions.append(editButton, deleteButton);
+  footer.append(editButton, deleteButton);
 
-  card.append(info, status, actions);
+  card.append(header, parentInfo, footer);
 
   return card;
 }
 
 // ========================================
-// Render Subcategory List
+// Render List
 // ========================================
 
-function renderSubcategoryList(items = []) {
-  const list = getElement('#subcategory-list');
+function renderSubcategoryList(items = getFilteredSubcategories()) {
+  const list = getElement('#subcategories-list');
 
   if (!list) return;
 
   list.replaceChildren();
 
+  renderSummary(items);
+
   if (!items.length) {
-    list.append(
+    const hasAnyData = allSubcategories.length > 0;
+
+    list.appendChild(
       createMessage(
-        getSelectedCategory()
-          ? 'এই Category-তে কোনো Subcategory নেই।'
-          : 'প্রথমে Collection এবং Category নির্বাচন করুন।'
+        'subcategories-empty',
+        hasAnyData
+          ? 'No Subcategories Found'
+          : 'No Subcategories Yet',
+        hasAnyData
+          ? 'Try changing the filters or search keyword.'
+          : 'Add a subcategory to get started.'
       )
     );
 
     return;
   }
 
-  items.forEach(item => {
-    list.append(renderSubcategoryItem(item));
+  const grid = createElement('div', {
+    className: 'subcategories-grid'
   });
+
+  const fragment = document.createDocumentFragment();
+
+  items.forEach(item => {
+    fragment.appendChild(renderSubcategoryItem(item));
+  });
+
+  grid.appendChild(fragment);
+  list.appendChild(grid);
 }
 
 // ========================================
-// Search
+// Refresh List
 // ========================================
 
-function filterSubcategories() {
-  const search = getElement('#subcategory-search');
+function refreshList() {
+  renderSubcategoryList(getFilteredSubcategories());
+}
 
-  const keyword = (search?.value || '')
-    .trim()
-    .toLowerCase();
+// ========================================
+// Load Taxonomy
+// ========================================
 
-  const filtered = subcategoriesData.filter(item => {
-    return (
-      String(item.name || '').toLowerCase().includes(keyword) ||
-      String(item.id || '').toLowerCase().includes(keyword)
+async function loadCollections({ forceRefresh = false } = {}) {
+  const list = getElement('#subcategories-list');
+
+  if (!list) return;
+
+  list.replaceChildren(
+    createMessage(
+      'subcategories-loading',
+      'Loading Subcategories...',
+      'Please wait while taxonomy data is loading.'
+    )
+  );
+
+  try {
+    const response = await api.taxonomy.load({ forceRefresh });
+
+    if (!pageElement) return;
+
+    if (!Array.isArray(response?.collections)) {
+      throw new Error('Invalid collections data received from server.');
+    }
+
+    collectionsData = response.collections;
+
+    buildSubcategoryList();
+
+    updateFilterOptions({
+      collectionId: '',
+      categoryId: ''
+    });
+
+    refreshList();
+
+  } catch (error) {
+    console.error('[SUBCATEGORIES] Load failed:', error);
+
+    if (!pageElement) return;
+
+    list.replaceChildren(
+      createMessage(
+        'subcategories-error',
+        'Unable to Load Subcategories',
+        error.message || 'Please try again.'
+      )
     );
+
+    const retryButton = createElement('button', {
+      className: 'btn btn-primary',
+      text: 'Try Again',
+      attributes: { type: 'button' }
+    });
+
+    retryButton.addEventListener('click', () => {
+      loadCollections({ forceRefresh: true });
+    });
+
+    list.appendChild(retryButton);
+  }
+}
+
+// ========================================
+// Modal Helpers
+// ========================================
+
+function closeModal() {
+  getElement('.modal-overlay.active')?.remove();
+  isSaving = false;
+}
+
+function createFormField(labelText, input, hint = '') {
+  const field = createElement('div', {
+    className: 'form-group'
   });
 
-  renderSubcategoryList(filtered);
+  const label = createElement('label', {
+    text: labelText
+  });
+
+  field.append(label, input);
+
+  if (hint) {
+    field.appendChild(
+      createElement('small', {
+        className: 'form-hint',
+        text: hint
+      })
+    );
+  }
+
+  return field;
+}
+
+function createSelectOption(text, value) {
+  return createElement('option', {
+    text,
+    attributes: { value }
+  });
 }
 
 // ========================================
 // Modal
 // ========================================
 
-function closeModal() {
-  getElement('#subcategory-modal')?.remove();
-}
-
-function createField(labelText, input) {
-  const field = createElement('div', {
-    className: 'form-group'
-  });
-
-  field.append(
-    createElement('label', {
-      text: labelText
-    }),
-    input
-  );
-
-  return field;
-}
-
 function openSubcategoryModal(item = null) {
   const isEdit = Boolean(item);
 
   closeModal();
 
+  const overlay = createElement('div', {
+    className: 'modal-overlay active'
+  });
+
   const modal = createElement('div', {
-    className: 'modal-overlay',
+    className: 'modal',
     attributes: {
-      id: 'subcategory-modal'
+      role: 'dialog',
+      'aria-modal': 'true',
+      'aria-labelledby': 'subcategory-modal-title'
     }
   });
 
-  const content = createElement('div', {
-    className: 'modal-content'
-  });
-
+  // Header
   const header = createElement('div', {
     className: 'modal-header'
   });
 
-  header.append(
+  const headerContent = createElement('div', {
+    className: 'modal-header-content'
+  });
+
+  headerContent.append(
     createElement('h2', {
+      className: 'modal-title',
+      id: 'subcategory-modal-title',
       text: isEdit ? 'Edit Subcategory' : 'Add Subcategory'
+    }),
+    createElement('p', {
+      className: 'modal-subtitle',
+      text: isEdit
+        ? 'Update subcategory information.'
+        : 'Create a subcategory under a collection and category.'
     })
   );
 
@@ -404,53 +693,157 @@ function openSubcategoryModal(item = null) {
     text: '×',
     attributes: {
       type: 'button',
-      'aria-label': 'Close'
+      'aria-label': 'Close modal'
     }
   });
 
-  closeButton.addEventListener('click', closeModal);
+  header.append(headerContent, closeButton);
 
-  header.append(closeButton);
-
+  // Form
   const form = createElement('form', {
     className: 'modal-form',
+    attributes: { id: 'subcategory-form' }
+  });
+
+  // Collection select
+  const collectionSelect = createElement('select', {
+    className: 'form-control',
     attributes: {
-      id: 'subcategory-form'
+      name: 'collectionId',
+      required: true
     }
   });
 
+  collectionSelect.appendChild(
+    createSelectOption('Select Collection', '')
+  );
+
+  collectionsData.forEach(collection => {
+    collectionSelect.appendChild(
+      createSelectOption(
+        collection.name || collection.id,
+        collection.id
+      )
+    );
+  });
+
+  collectionSelect.value = item?._collectionId || getSelectedCollectionId();
+
+  // Category select
+  const categorySelect = createElement('select', {
+    className: 'form-control',
+    attributes: {
+      name: 'categoryId',
+      required: true
+    }
+  });
+
+  function populateModalCategories(selectedCategoryId = '') {
+    const collection = collectionsData.find(
+      entry => entry.id === collectionSelect.value
+    );
+
+    categorySelect.replaceChildren();
+    categorySelect.appendChild(
+      createSelectOption('Select Category', '')
+    );
+
+    getCategories(collection).forEach(category => {
+      categorySelect.appendChild(
+        createSelectOption(
+          category.name || category.id,
+          category.id
+        )
+      );
+    });
+
+    categorySelect.value = selectedCategoryId;
+    categorySelect.disabled = getCategories(collection).length === 0;
+  }
+
+  populateModalCategories(item?._categoryId || getSelectedCategoryId());
+
+  if (isEdit) {
+    collectionSelect.disabled = true;
+    categorySelect.disabled = true;
+  }
+
+  collectionSelect.addEventListener('change', () => {
+    populateModalCategories('');
+  });
+
+  // Name
   const nameInput = createElement('input', {
+    className: 'form-control',
     attributes: {
       type: 'text',
       name: 'name',
       placeholder: 'Enter subcategory name',
-      maxlength: '100',
+      maxlength: 100,
       required: true,
-      value: item?.name || ''
+      autocomplete: 'off'
     }
   });
 
+  nameInput.value = item?.name || '';
+
+  // ID
   const idInput = createElement('input', {
+    className: 'form-control',
     attributes: {
       type: 'text',
       name: 'id',
-      placeholder: 'Auto generated ID',
-      value: item?.id || '',
+      placeholder: 'Automatically generated ID',
+      maxlength: 128,
       required: true,
-      disabled: isEdit
+      readonly: true
     }
   });
 
+  idInput.value = item?.id || '';
+
+  // Icon
   const iconInput = createElement('input', {
+    className: 'form-control',
     attributes: {
       type: 'text',
       name: 'icon',
-      placeholder: 'Example: 👕',
-      maxlength: '50',
-      value: item?.icon || ''
+      placeholder: 'Example: 👕 or fa-solid fa-shirt',
+      maxlength: 200,
+      autocomplete: 'off'
     }
   });
 
+  iconInput.value = item?.icon || '';
+
+  // Icon preview
+  const previewGroup = createElement('div', {
+    className: 'form-group subcategory-icon-preview-group'
+  });
+
+  const preview = createElement('div', {
+    className: 'subcategory-icon subcategory-icon-preview',
+    attributes: { 'aria-label': 'Subcategory icon preview' }
+  });
+
+  const previewHelp = createElement('small', {
+    className: 'form-hint',
+    text: 'Emoji অথবা Font Awesome class ব্যবহার করতে পারবেন।'
+  });
+
+  renderIconContent(preview, item?.icon || '', '📁');
+
+  previewGroup.append(
+    createElement('label', { text: 'Icon Preview' }),
+    preview,
+    previewHelp
+  );
+
+  iconInput.addEventListener('input', () => {
+    renderIconContent(preview, iconInput.value, '📁');
+  });
+
+  // Active
   const activeInput = createElement('input', {
     attributes: {
       type: 'checkbox',
@@ -468,24 +861,33 @@ function openSubcategoryModal(item = null) {
 
   activeLabel.append(
     activeInput,
-    document.createTextNode(' Active')
+    createElement('span', { text: 'Active Subcategory' })
   );
 
-  const activeField = createElement('div', {
+  const activeGroup = createElement('div', {
     className: 'form-group'
   });
 
-  activeField.append(activeLabel);
+  activeGroup.appendChild(activeLabel);
 
-  nameInput.addEventListener('input', () => {
-    if (!isEdit) {
+  // Auto ID
+  if (!isEdit) {
+    nameInput.addEventListener('input', () => {
       idInput.value = createSubcategoryId(
         nameInput.value,
-        getSelectedCategory()?.id || 'subcategory'
+        categorySelect.value || 'subcategory'
       );
-    }
-  });
+    });
 
+    categorySelect.addEventListener('change', () => {
+      idInput.value = createSubcategoryId(
+        nameInput.value,
+        categorySelect.value || 'subcategory'
+      );
+    });
+  }
+
+  // Actions
   const actions = createElement('div', {
     className: 'modal-actions'
   });
@@ -496,31 +898,34 @@ function openSubcategoryModal(item = null) {
     attributes: { type: 'button' }
   });
 
-  cancelButton.addEventListener('click', closeModal);
-
   const saveButton = createElement('button', {
     className: 'btn btn-primary',
-    text: isEdit ? 'Update Subcategory' : 'Save Subcategory',
+    text: isEdit ? 'Update Subcategory' : 'Create Subcategory',
     attributes: { type: 'submit' }
   });
 
   actions.append(cancelButton, saveButton);
 
   form.append(
-    createField('Subcategory Name', nameInput),
-    createField('Subcategory ID', idInput),
-    createField('Icon / Emoji', iconInput),
-    activeField,
+    createFormField('Collection', collectionSelect),
+    createFormField('Category', categorySelect),
+    createFormField('Subcategory Name', nameInput),
+    createFormField('Subcategory ID', idInput, 'ID automatically generated from category and name.'),
+    createFormField('Icon (Optional)', iconInput),
+    previewGroup,
+    activeGroup,
     actions
   );
 
-  content.append(header, form);
-  modal.append(content);
+  modal.append(header, form);
+  overlay.appendChild(modal);
 
-  modal.addEventListener('click', event => {
-    if (event.target === modal) {
-      closeModal();
-    }
+  // Events
+  closeButton.addEventListener('click', closeModal);
+  cancelButton.addEventListener('click', closeModal);
+
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) closeModal();
   });
 
   form.addEventListener('submit', async event => {
@@ -528,39 +933,53 @@ function openSubcategoryModal(item = null) {
 
     if (isSaving) return;
 
-    const collection = getSelectedCollection();
-    const category = getSelectedCategory();
-
-    if (!collection || !category) {
-      notify('Collection এবং Category নির্বাচন করুন।', 'error');
-      return;
-    }
-
+    const collectionId = collectionSelect.value;
+    const categoryId = categorySelect.value;
     const name = nameInput.value.trim();
     const id = idInput.value.trim();
     const icon = iconInput.value.trim();
 
-    if (!name || !id) {
-      notify('Name এবং ID আবশ্যক।', 'error');
+    const collection = collectionsData.find(
+      entry => entry.id === collectionId
+    );
+
+    const category = getCategories(collection).find(
+      entry => entry.id === categoryId
+    );
+
+    if (!collection || !category) {
+      notify('Please select a valid Collection and Category.', 'warning');
       return;
     }
 
+    if (!name || !id) {
+      notify('Subcategory name and ID are required.', 'warning');
+      return;
+    }
+
+    if (name.length > 100 || id.length > 128) {
+      notify('Name or ID is too long.', 'warning');
+      return;
+    }
+
+    const payload = {
+      name,
+      id,
+      icon,
+      active: activeInput.checked
+    };
+
     isSaving = true;
     saveButton.disabled = true;
+    cancelButton.disabled = true;
+    closeButton.disabled = true;
     saveButton.textContent = 'Saving...';
 
     try {
-      const payload = {
-        name,
-        id,
-        icon,
-        active: activeInput.checked
-      };
-
       if (isEdit) {
         await api.taxonomy.updateSubcategory(
-          collection.id,
-          category.id,
+          item._collectionId,
+          item._categoryId,
           item.id,
           {
             name: payload.name,
@@ -570,18 +989,27 @@ function openSubcategoryModal(item = null) {
         );
       } else {
         await api.taxonomy.createSubcategory(
-          collection.id,
-          category.id,
+          collectionId,
+          categoryId,
           payload
         );
       }
 
       closeModal();
 
-      await refreshSubcategories(
-        collection.id,
-        category.id
-      );
+      await loadCollections({ forceRefresh: true });
+
+      // Keep the parent filters selected after saving.
+      const collectionFilter = getElement('#subcategory-collection');
+      const categoryFilter = getElement('#subcategory-category');
+
+      if (collectionFilter) collectionFilter.value = collectionId;
+
+      setCategoryOptions(categoryId);
+
+      if (categoryFilter) categoryFilter.value = categoryId;
+
+      refreshList();
 
       notify(
         isEdit
@@ -591,81 +1019,37 @@ function openSubcategoryModal(item = null) {
       );
 
     } catch (error) {
-      console.error('[Subcategory Save]', error);
+      console.error('[SUBCATEGORIES] Save failed:', error);
 
       notify(
-        error.message || 'Subcategory save failed.',
+        error.message || 'Unable to save subcategory.',
         'error'
       );
 
-    } finally {
       isSaving = false;
-
-      if (saveButton.isConnected) {
-        saveButton.disabled = false;
-        saveButton.textContent = isEdit
-          ? 'Update Subcategory'
-          : 'Save Subcategory';
-      }
+      saveButton.disabled = false;
+      cancelButton.disabled = false;
+      closeButton.disabled = false;
+      saveButton.textContent = isEdit
+        ? 'Update Subcategory'
+        : 'Create Subcategory';
     }
   });
 
-  pageElement.append(modal);
+  getElement('#subcategories-page')?.appendChild(overlay);
 
   nameInput.focus();
 }
 
 // ========================================
-// Refresh After Mutation
+// Edit
 // ========================================
 
-async function refreshSubcategories(collectionId, categoryId) {
-  const response = await api.taxonomy.load({
-    forceRefresh: true
-  });
-
-  if (!Array.isArray(response?.collections)) {
-    throw new Error('Unable to refresh taxonomy data.');
-  }
-
-  collectionsData = response.collections;
-
-  const collection = collectionsData.find(
-    item => item.id === collectionId
-  );
-
-  categoriesData = Array.isArray(collection?.categories)
-    ? collection.categories
-    : [];
-
-  const category = categoriesData.find(
-    item => item.id === categoryId
-  );
-
-  subcategoriesData = getSubcategoryItems(category);
-
-  const collectionSelect = getElement('#subcategory-collection');
-  const categorySelect = getElement('#subcategory-category');
-
-  if (collectionSelect) {
-    collectionSelect.value = collectionId;
-  }
-
-  if (categorySelect) {
-    categorySelect.value = categoryId;
-  }
-
-  renderSubcategoryList(subcategoriesData);
-  updateAddButton();
-}
-
-// ========================================
-// Edit Subcategory
-// ========================================
-
-function editSubcategory(id) {
-  const item = subcategoriesData.find(
-    subcategory => subcategory.id === id
+function editSubcategory(id, collectionId, categoryId) {
+  const item = allSubcategories.find(entry =>
+    entry.id === id &&
+    entry._collectionId === collectionId &&
+    entry._categoryId === categoryId
   );
 
   if (!item) {
@@ -677,20 +1061,20 @@ function editSubcategory(id) {
 }
 
 // ========================================
-// Delete Subcategory
+// Delete
 // ========================================
 
-async function deleteSubcategory(id) {
-  const collection = getSelectedCollection();
-  const category = getSelectedCategory();
-
-  if (!collection || !category) return;
-
-  const item = subcategoriesData.find(
-    subcategory => subcategory.id === id
+async function deleteSubcategory(id, collectionId, categoryId) {
+  const item = allSubcategories.find(entry =>
+    entry.id === id &&
+    entry._collectionId === collectionId &&
+    entry._categoryId === categoryId
   );
 
-  if (!item) return;
+  if (!item) {
+    notify('Subcategory not found.', 'error');
+    return;
+  }
 
   const confirmed = await confirmAction(
     `Are you sure you want to delete "${item.name}"?`
@@ -700,23 +1084,20 @@ async function deleteSubcategory(id) {
 
   try {
     await api.taxonomy.deleteSubcategory(
-      collection.id,
-      category.id,
+      collectionId,
+      categoryId,
       id
     );
 
-    await refreshSubcategories(
-      collection.id,
-      category.id
-    );
+    await loadCollections({ forceRefresh: true });
 
     notify('Subcategory deleted successfully.', 'success');
 
   } catch (error) {
-    console.error('[Subcategory Delete]', error);
+    console.error('[SUBCATEGORIES] Delete failed:', error);
 
     notify(
-      error.message || 'Subcategory delete failed.',
+      error.message || 'Unable to delete subcategory.',
       'error'
     );
   }
@@ -727,16 +1108,19 @@ async function deleteSubcategory(id) {
 // ========================================
 
 export async function render() {
-  pageElement = null;
+  loadFontAwesome();
 
+  pageElement = null;
   collectionsData = [];
-  categoriesData = [];
-  subcategoriesData = [];
+  allSubcategories = [];
+  isSaving = false;
 
   const container = createElement('section', {
-    className: 'page-content subcategories-page'
+    className: 'page subcategories-page',
+    id: 'subcategories-page'
   });
 
+  // Header
   const header = createElement('div', {
     className: 'page-header'
   });
@@ -746,11 +1130,9 @@ export async function render() {
   });
 
   heading.append(
-    createElement('h1', {
-      text: 'Subcategories'
-    }),
+    createElement('h1', { text: 'Subcategories' }),
     createElement('p', {
-      text: 'Manage category subcategories.'
+      text: 'Manage all product subcategories.'
     })
   );
 
@@ -759,67 +1141,131 @@ export async function render() {
     text: 'Add Subcategory',
     attributes: {
       type: 'button',
-      id: 'add-subcategory-btn',
-      disabled: true
+      id: 'add-subcategory-btn'
     }
   });
 
   header.append(heading, addButton);
 
+  // Summary
+  const summary = createElement('div', {
+    className: 'subcategories-summary'
+  });
+
+  const summaryItems = [
+    ['Total Subcategories', 'subcategory-total', 'fa-solid fa-layer-group'],
+    ['Active', 'subcategory-active', 'fa-solid fa-circle-check'],
+    ['Inactive', 'subcategory-inactive', 'fa-solid fa-circle-xmark']
+  ];
+
+  summaryItems.forEach(([label, id, iconClass]) => {
+    const card = createElement('div', {
+      className: 'subcategory-summary-card'
+    });
+
+    const icon = createElement('div', {
+      className: 'subcategory-summary-icon'
+    });
+
+    icon.appendChild(
+      createElement('i', {
+        className: iconClass,
+        attributes: { 'aria-hidden': 'true' }
+      })
+    );
+
+    const content = createElement('div', {
+      className: 'subcategory-summary-content'
+    });
+
+    content.append(
+      createElement('span', {
+        className: 'subcategory-summary-label',
+        text: label
+      }),
+      createElement('strong', {
+        className: 'subcategory-summary-value',
+        id,
+        text: '0'
+      })
+    );
+
+    card.append(icon, content);
+    summary.appendChild(card);
+  });
+
+  // Filters
   const filters = createElement('div', {
-    className: 'filter-card'
+    className: 'subcategories-filters'
   });
 
   const collectionSelect = createElement('select', {
-    attributes: {
-      id: 'subcategory-collection'
-    }
+    className: 'form-control subcategory-collection-select',
+    attributes: { id: 'subcategory-collection' }
   });
 
-  const collectionField = createField(
-    'Collection',
-    collectionSelect
-  );
-
   const categorySelect = createElement('select', {
+    className: 'form-control subcategory-category-select',
     attributes: {
       id: 'subcategory-category',
       disabled: true
     }
   });
 
-  const categoryField = createField(
-    'Category',
-    categorySelect
-  );
-
   const searchInput = createElement('input', {
+    className: 'form-control subcategory-search',
     attributes: {
       id: 'subcategory-search',
       type: 'search',
-      placeholder: 'Search by name or ID'
+      placeholder: 'Search subcategory, collection or category...',
+      autocomplete: 'off'
     }
   });
 
-  const searchField = createField(
-    'Search Subcategory',
+  const collectionField = createElement('div', {
+    className: 'subcategory-filter-field'
+  });
+
+  collectionField.append(
+    createElement('label', {
+      text: 'Collection',
+      attributes: { for: 'subcategory-collection' }
+    }),
+    collectionSelect
+  );
+
+  const categoryField = createElement('div', {
+    className: 'subcategory-filter-field'
+  });
+
+  categoryField.append(
+    createElement('label', {
+      text: 'Category',
+      attributes: { for: 'subcategory-category' }
+    }),
+    categorySelect
+  );
+
+  const searchField = createElement('div', {
+    className: 'subcategory-filter-field subcategory-search-field'
+  });
+
+  searchField.append(
+    createElement('label', {
+      text: 'Search',
+      attributes: { for: 'subcategory-search' }
+    }),
     searchInput
   );
 
-  filters.append(
-    collectionField,
-    categoryField,
-    searchField
-  );
+  filters.append(collectionField, categoryField, searchField);
 
+  // List
   const list = createElement('div', {
-    className: 'subcategory-list',
-    attributes: {
-      id: 'subcategory-list'
-    }
+    id: 'subcategories-list'
   });
 
-  container.append(header, filters, list);
+  container.append(header, summary, filters, list);
 
   pageElement = container;
 
@@ -839,43 +1285,34 @@ export function bindEvents() {
   const categorySelect = getElement('#subcategory-category');
   const searchInput = getElement('#subcategory-search');
   const addButton = getElement('#add-subcategory-btn');
-  const list = getElement('#subcategory-list');
+  const list = getElement('#subcategories-list');
 
   collectionSelect?.addEventListener('change', () => {
-    updateSelectedCollection();
+    setCategoryOptions('');
+    refreshList();
   });
 
-  categorySelect?.addEventListener('change', () => {
-    updateSelectedCategory();
-  });
+  categorySelect?.addEventListener('change', refreshList);
 
-  searchInput?.addEventListener('input', () => {
-    filterSubcategories();
-  });
+  searchInput?.addEventListener('input', refreshList);
 
   addButton?.addEventListener('click', () => {
-    if (!getSelectedCollection() || !getSelectedCategory()) {
-      notify('প্রথমে Collection ও Category নির্বাচন করুন.', 'error');
-      return;
-    }
-
     openSubcategoryModal();
   });
 
   list?.addEventListener('click', event => {
     const button = event.target.closest('[data-action]');
 
-    if (!button) return;
+    if (!button || !list.contains(button)) return;
 
-    const id = button.dataset.id;
-    const action = button.dataset.action;
+    const { action, id, collectionId, categoryId } = button.dataset;
 
     if (action === 'edit') {
-      editSubcategory(id);
+      editSubcategory(id, collectionId, categoryId);
     }
 
     if (action === 'delete') {
-      deleteSubcategory(id);
+      deleteSubcategory(id, collectionId, categoryId);
     }
   });
 }
@@ -888,12 +1325,8 @@ export function getCollections() {
   return [...collectionsData];
 }
 
-export function getCategories() {
-  return [...categoriesData];
-}
-
 export function getSubcategories() {
-  return [...subcategoriesData];
+  return [...allSubcategories];
 }
 
 // ========================================
@@ -904,10 +1337,7 @@ export function cleanup() {
   closeModal();
 
   pageElement = null;
-
   collectionsData = [];
-  categoriesData = [];
-  subcategoriesData = [];
-
+  allSubcategories = [];
   isSaving = false;
 }
