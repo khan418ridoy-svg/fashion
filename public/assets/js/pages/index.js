@@ -69,7 +69,7 @@ function isNavigationCurrent(id) {
 
 function updateActiveNavigation(pageName) {
   const items = document.querySelectorAll(
-    '.sidebar [data-page], [data-sidebar-nav][data-page]'
+    '.admin-sidebar [data-page], [data-sidebar-nav][data-page]'
   );
 
   items.forEach(item => {
@@ -409,10 +409,11 @@ export function bindPageNavigation(root = document) {
       return;
     }
 
-    // Ignore Collections submenu toggle controls.
+    // Ignore only submenu toggle controls.
+    // Collections link must be allowed to navigate.
     if (
       target.closest(
-        '.sidebar-group-link, .sidebar-group-toggle, [data-page-toggle]'
+        '.sidebar-group-toggle, [data-page-toggle]'
       )
     ) {
       return;
