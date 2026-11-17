@@ -9,7 +9,22 @@ import {
 import { api } from '../api.js';
 
 // ========================================
-// Categories Page State
+// Font Awesome Loader
+// ========================================
+
+function loadFontAwesome() {
+  if (document.querySelector('link[data-font-awesome]')) return;
+
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css';
+  link.dataset.fontAwesome = 'true';
+
+  document.head.appendChild(link);
+}
+
+// ========================================
+// Page State
 // ========================================
 
 let pageElement = null;
@@ -18,7 +33,58 @@ let categoriesData = [];
 let isSaving = false;
 
 // ========================================
-// Helpers
+// Icon Helpers
+// ========================================
+
+function isFontAwesomeIcon(value = '') {
+  const classes = String(value).trim().split(/\s+/);
+
+  const validStyles = [
+    'fa-solid',
+    'fa-regular',
+    'fa-brands',
+    'fa-light',
+    'fa-thin',
+    'fa-duotone',
+    'fas',
+    'far',
+    'fab',
+    'fal',
+    'fat'
+  ];
+
+  return (
+    classes.length >= 2 &&
+    validStyles.includes(classes[0]) &&
+    classes.every(className =>
+      /^fa-[a-z0-9-]+$/.test(className) ||
+      validStyles.includes(className)
+    )
+  );
+}
+
+function renderIconContent(container, iconValue = '') {
+  container.replaceChildren();
+
+  const value = String(iconValue || '').trim();
+
+  if (isFontAwesomeIcon(value)) {
+    container.appendChild(
+      createElement('i', {
+        className: value,
+        attributes: {
+          'aria-hidden': 'true'
+        }
+      })
+    );
+    return;
+  }
+
+  container.textContent = value || '📁';
+}
+
+// ========================================
+// General Helpers
 // ========================================
 
 function notify(message, type = 'info') {
@@ -44,20 +110,27 @@ function slugify(value = '') {
 
 function getSubcategories(category) {
   const items = category?.subCategories ?? category?.subcategories;
-
   return Array.isArray(items) ? items : [];
 }
 
-function getSelectedCollection() {
-  const select = pageElement?.querySelector(
-    '#category-collection'
-  );
-
-  const collectionId = select?.value;
-
+function getCollectionById(collectionId) {
   return collectionsData.find(
     collection => collection.id === collectionId
   ) || null;
+}
+
+function getSelectedCollectionId() {
+  return pageElement?.querySelector(
+    '#category-collection'
+  )?.value || '';
+}
+
+function getSelectedCollection() {
+  const collectionId = getSelectedCollectionId();
+
+  if (!collectionId) return null;
+
+  return getCollectionById(collectionId);
 }
 
 function createMessage(className, titleText, descriptionText) {
@@ -76,33 +149,53 @@ function createMessage(className, titleText, descriptionText) {
   return wrapper;
 }
 
+function getAllCategories() {
+  return collectionsData.flatMap(collection => {
+    const categories = Array.isArray(collection.categories)
+      ? collection.categories
+      : [];
+
+    return categories.map(category => ({
+      ...category,
+      _collectionId: collection.id,
+      _collectionName: collection.name || collection.id
+    }));
+  });
+}
+
 // ========================================
 // Modal
 // ========================================
 
 function closeCategoryModal() {
-  pageElement?.querySelector('.modal-overlay')?.remove();
+  pageElement?.querySelector('.modal-overlay.active')?.remove();
   isSaving = false;
 }
 
-function openCategoryModal(category = null) {
-  const collection = getSelectedCollection();
+function openCategoryModal(category = null, sourceCollectionId = '') {
+  const isEdit = Boolean(category);
 
-  if (!collection) {
-    notify('Please select a collection first.', 'warning');
+  const currentFilterId = getSelectedCollectionId();
+
+  const initialCollectionId =
+    sourceCollectionId ||
+    category?._collectionId ||
+    currentFilterId ||
+    '';
+
+  if (isEdit && !initialCollectionId) {
+    notify('Unable to identify the category collection.', 'error');
     return;
   }
 
   closeCategoryModal();
 
-  const isEdit = Boolean(category);
-
   const overlay = createElement('div', {
-    className: 'modal-overlay'
+    className: 'modal-overlay active'
   });
 
   const modal = createElement('div', {
-    className: 'modal-content'
+    className: 'modal'
   });
 
   const header = createElement('div', {
@@ -131,6 +224,54 @@ function openCategoryModal(category = null) {
     }
   });
 
+  // Collection Selector
+  const collectionGroup = createElement('div', {
+    className: 'form-group'
+  });
+
+  const collectionLabel = createElement('label', {
+    text: 'Collection'
+  });
+
+  const collectionSelect = createElement('select', {
+    className: 'form-control',
+    attributes: {
+      name: 'collectionId',
+      required: 'required'
+    }
+  });
+
+  collectionSelect.appendChild(
+    createElement('option', {
+      text: 'Select Collection',
+      attributes: { value: '' }
+    })
+  );
+
+  collectionsData.forEach(collection => {
+    collectionSelect.appendChild(
+      createElement('option', {
+        text: collection.name || collection.id,
+        attributes: {
+          value: collection.id
+        }
+      })
+    );
+  });
+
+  collectionSelect.value = initialCollectionId;
+
+  // Moving an existing category needs a dedicated backend operation.
+  if (isEdit) {
+    collectionSelect.disabled = true;
+  }
+
+  collectionGroup.append(
+    collectionLabel,
+    collectionSelect
+  );
+
+  // Category Name
   const nameGroup = createElement('div', {
     className: 'form-group'
   });
@@ -154,6 +295,7 @@ function openCategoryModal(category = null) {
 
   nameGroup.append(nameLabel, nameInput);
 
+  // Category ID
   const idGroup = createElement('div', {
     className: 'form-group'
   });
@@ -162,22 +304,28 @@ function openCategoryModal(category = null) {
     text: 'Category ID'
   });
 
+  const idAttributes = {
+    type: 'text',
+    name: 'id',
+    placeholder: 'category-id',
+    required: 'required',
+    maxlength: '80'
+  };
+
+  if (isEdit) {
+    idAttributes.readonly = 'readonly';
+  }
+
   const idInput = createElement('input', {
     className: 'form-control',
-    attributes: {
-      type: 'text',
-      name: 'id',
-      placeholder: 'category-id',
-      required: 'required',
-      maxlength: '80',
-      readonly: isEdit ? 'readonly' : null
-    }
+    attributes: idAttributes
   });
 
   idInput.value = category?.id || '';
 
   idGroup.append(idLabel, idInput);
 
+  // Icon
   const iconGroup = createElement('div', {
     className: 'form-group'
   });
@@ -191,8 +339,9 @@ function openCategoryModal(category = null) {
     attributes: {
       type: 'text',
       name: 'icon',
-      placeholder: 'Example: 👕',
-      maxlength: '20'
+      placeholder: 'Example: 👕 or fa-solid fa-shirt',
+      maxlength: '200',
+      autocomplete: 'off'
     }
   });
 
@@ -200,6 +349,40 @@ function openCategoryModal(category = null) {
 
   iconGroup.append(iconLabel, iconInput);
 
+  // Icon Preview
+  const previewGroup = createElement('div', {
+    className: 'form-group collection-icon-preview-group'
+  });
+
+  const previewLabel = createElement('label', {
+    text: 'Icon Preview'
+  });
+
+  const iconPreview = createElement('div', {
+    className: 'collection-icon collection-icon-preview',
+    attributes: {
+      'aria-label': 'Category icon preview'
+    }
+  });
+
+  const iconHelp = createElement('small', {
+    className: 'form-hint',
+    text: 'Enter an emoji or Font Awesome class, for example: fa-solid fa-shirt'
+  });
+
+  renderIconContent(iconPreview, category?.icon || '');
+
+  previewGroup.append(
+    previewLabel,
+    iconPreview,
+    iconHelp
+  );
+
+  iconInput.addEventListener('input', () => {
+    renderIconContent(iconPreview, iconInput.value);
+  });
+
+  // Active Checkbox
   const activeGroup = createElement('div', {
     className: 'form-group'
   });
@@ -226,6 +409,7 @@ function openCategoryModal(category = null) {
   activeLabel.append(activeInput, activeText);
   activeGroup.append(activeLabel);
 
+  // Actions
   const actions = createElement('div', {
     className: 'modal-actions'
   });
@@ -233,25 +417,23 @@ function openCategoryModal(category = null) {
   const cancelButton = createElement('button', {
     className: 'btn btn-secondary',
     text: 'Cancel',
-    attributes: {
-      type: 'button'
-    }
+    attributes: { type: 'button' }
   });
 
   const saveButton = createElement('button', {
     className: 'btn btn-primary',
     text: isEdit ? 'Update Category' : 'Save Category',
-    attributes: {
-      type: 'submit'
-    }
+    attributes: { type: 'submit' }
   });
 
   actions.append(cancelButton, saveButton);
 
   form.append(
+    collectionGroup,
     nameGroup,
     idGroup,
     iconGroup,
+    previewGroup,
     activeGroup,
     actions
   );
@@ -261,13 +443,14 @@ function openCategoryModal(category = null) {
 
   pageElement.append(overlay);
 
-  // Auto-generate ID from name
+  // Auto-generate ID
   if (!isEdit) {
     nameInput.addEventListener('input', () => {
       idInput.value = slugify(nameInput.value);
     });
   }
 
+  // Close Events
   closeButton.addEventListener('click', closeCategoryModal);
   cancelButton.addEventListener('click', closeCategoryModal);
 
@@ -277,18 +460,30 @@ function openCategoryModal(category = null) {
     }
   });
 
+  // Submit
   form.addEventListener('submit', async event => {
     event.preventDefault();
 
     if (isSaving) return;
 
+    const collectionId = collectionSelect.value;
     const name = nameInput.value.trim();
     const id = idInput.value.trim();
     const icon = iconInput.value.trim();
     const active = activeInput.checked;
 
+    if (!collectionId || !getCollectionById(collectionId)) {
+      notify('Please select a valid collection.', 'warning');
+      return;
+    }
+
     if (!name || !id) {
       notify('Category name and ID are required.', 'warning');
+      return;
+    }
+
+    if (name.length > 80 || id.length > 80) {
+      notify('Category name and ID cannot exceed 80 characters.', 'warning');
       return;
     }
 
@@ -306,7 +501,7 @@ function openCategoryModal(category = null) {
     try {
       if (isEdit) {
         await api.taxonomy.updateCategory(
-          collection.id,
+          collectionId,
           category.id,
           {
             name,
@@ -316,14 +511,14 @@ function openCategoryModal(category = null) {
         );
       } else {
         await api.taxonomy.createCategory(
-          collection.id,
+          collectionId,
           payload
         );
       }
 
       closeCategoryModal();
 
-      await refreshCategories(collection.id);
+      await refreshCategories(collectionId);
 
       notify(
         isEdit
@@ -355,7 +550,7 @@ function openCategoryModal(category = null) {
 // Refresh Categories
 // ========================================
 
-async function refreshCategories(selectedCollectionId) {
+async function refreshCategories(selectedCollectionId = '') {
   const response = await api.taxonomy.load({
     forceRefresh: true
   });
@@ -366,28 +561,20 @@ async function refreshCategories(selectedCollectionId) {
 
   collectionsData = response.collections;
 
-  setCollections(collectionsData);
-
-  const select = pageElement?.querySelector(
-    '#category-collection'
-  );
-
-  if (select) {
-    select.value = selectedCollectionId;
-  }
-
+  setCollections(collectionsData, selectedCollectionId);
   updateSelectedCollection();
 }
 
 // ========================================
-// Render Category Item
+// Render Category Card
 // ========================================
 
 function renderCategoryItem(category) {
   const item = createElement('article', {
     className: 'category-card',
     attributes: {
-      'data-category-name': category.name || category.id || ''
+      'data-category-id': category.id || '',
+      'data-collection-id': category._collectionId || ''
     }
   });
 
@@ -395,9 +582,18 @@ function renderCategoryItem(category) {
     className: 'category-card-header'
   });
 
+  const icon = createElement('div', {
+    className: 'category-icon',
+    attributes: {
+      'aria-hidden': 'true'
+    }
+  });
+
+  renderIconContent(icon, category.icon);
+
   const name = createElement('h3', {
     className: 'category-name',
-    text: `${category.icon || ''} ${category.name || category.id || 'Unnamed Category'}`
+    text: category.name || category.id || 'Unnamed Category'
   });
 
   const status = createElement('span', {
@@ -407,7 +603,12 @@ function renderCategoryItem(category) {
     text: category.active !== false ? 'Active' : 'Inactive'
   });
 
-  header.append(name, status);
+  header.append(icon, name, status);
+
+  const collectionName = createElement('p', {
+    className: 'category-collection-name',
+    text: `Collection: ${category._collectionName || 'Unknown'}`
+  });
 
   const id = createElement('p', {
     className: 'category-id',
@@ -428,8 +629,7 @@ function renderCategoryItem(category) {
     text: 'Edit',
     attributes: {
       type: 'button',
-      'data-action': 'edit',
-      'data-id': category.id
+      'data-action': 'edit'
     }
   });
 
@@ -438,14 +638,19 @@ function renderCategoryItem(category) {
     text: 'Delete',
     attributes: {
       type: 'button',
-      'data-action': 'delete',
-      'data-id': category.id
+      'data-action': 'delete'
     }
   });
 
   actions.append(editButton, deleteButton);
 
-  item.append(header, id, count, actions);
+  item.append(
+    header,
+    collectionName,
+    id,
+    count,
+    actions
+  );
 
   return item;
 }
@@ -468,10 +673,9 @@ function renderCategoryList(categories) {
       createMessage(
         'empty-state',
         'No Categories Found',
-        'This collection does not have any categories yet.'
+        'No categories are available for this selection.'
       )
     );
-
     return;
   }
 
@@ -490,14 +694,31 @@ function renderCategoryList(categories) {
 
 function filterCategories(searchText = '') {
   const query = searchText.trim().toLowerCase();
+  const selectedCollectionId = getSelectedCollectionId();
 
-  const filtered = categoriesData.filter(category => {
+  const allCategories = getAllCategories();
+
+  const filtered = allCategories.filter(category => {
+    const matchesCollection =
+      !selectedCollectionId ||
+      category._collectionId === selectedCollectionId;
+
     const name = String(category.name || '').toLowerCase();
     const id = String(category.id || '').toLowerCase();
+    const collectionName = String(
+      category._collectionName || ''
+    ).toLowerCase();
 
-    return name.includes(query) || id.includes(query);
+    const matchesSearch =
+      !query ||
+      name.includes(query) ||
+      id.includes(query) ||
+      collectionName.includes(query);
+
+    return matchesCollection && matchesSearch;
   });
 
+  categoriesData = filtered;
   renderCategoryList(filtered);
 }
 
@@ -508,29 +729,17 @@ function filterCategories(searchText = '') {
 function updateSelectedCollection() {
   if (!pageElement) return;
 
-  const collection = getSelectedCollection();
-
-  const list = pageElement.querySelector('#categories-list');
-
-  if (!list) return;
-
-  categoriesData = Array.isArray(collection?.categories)
-    ? collection.categories
-    : [];
-
   const searchInput = pageElement.querySelector('#category-search');
 
-  if (searchInput) {
-    searchInput.value = '';
-  }
+  filterCategories(searchInput?.value || '');
 
-  renderCategoryList(categoriesData);
+  const collectionId = getSelectedCollectionId();
 
   window.dispatchEvent(
     new CustomEvent('categories:collection-change', {
       detail: {
-        collectionId: collection?.id || null,
-        categories: categoriesData
+        collectionId: collectionId || null,
+        categories: [...categoriesData]
       }
     })
   );
@@ -570,14 +779,7 @@ async function loadCollections() {
     collectionsData = response.collections;
 
     setCollections(collectionsData);
-
-    list.replaceChildren(
-      createMessage(
-        'empty-state',
-        'Select a Collection',
-        'Choose a collection to view its categories.'
-      )
-    );
+    updateSelectedCollection();
 
   } catch (error) {
     console.error('[CATEGORIES] Load failed:', error);
@@ -614,21 +816,26 @@ async function loadCollections() {
 // Set Collections
 // ========================================
 
-export function setCollections(collections = []) {
+export function setCollections(
+  collections = [],
+  selectedCollectionId = null
+) {
   if (!pageElement) return;
 
   const select = pageElement.querySelector('#category-collection');
 
   if (!select) return;
 
+  const previousValue = selectedCollectionId !== null
+    ? selectedCollectionId
+    : select.value;
+
   select.replaceChildren();
 
   select.appendChild(
     createElement('option', {
-      text: 'Select Collection',
-      attributes: {
-        value: ''
-      }
+      text: 'All Collections',
+      attributes: { value: '' }
     })
   );
 
@@ -643,6 +850,11 @@ export function setCollections(collections = []) {
     );
   });
 
+  const exists = collections.some(
+    collection => collection.id === previousValue
+  );
+
+  select.value = exists ? previousValue : '';
   select.disabled = false;
 }
 
@@ -651,6 +863,8 @@ export function setCollections(collections = []) {
 // ========================================
 
 export async function render() {
+  loadFontAwesome();
+
   const container = createElement('section', {
     className: 'page categories-page',
     attributes: {
@@ -697,7 +911,6 @@ export async function render() {
     className: 'form-control',
     attributes: {
       id: 'category-collection',
-      required: 'required',
       disabled: 'disabled'
     }
   });
@@ -705,9 +918,7 @@ export async function render() {
   collectionSelect.appendChild(
     createElement('option', {
       text: 'Loading Collections...',
-      attributes: {
-        value: ''
-      }
+      attributes: { value: '' }
     })
   );
 
@@ -755,15 +966,15 @@ export function bindEvents() {
 
   // Add Category
   addButton?.addEventListener('click', () => {
-    if (!getSelectedCollection()) {
-      notify('Please select a collection first.', 'warning');
+    if (!collectionsData.length) {
+      notify('No collections available.', 'warning');
       return;
     }
 
     openCategoryModal();
   });
 
-  // Collection Change
+  // Collection Filter
   collectionSelect?.addEventListener('change', () => {
     updateSelectedCollection();
   });
@@ -785,28 +996,49 @@ export function bindEvents() {
     }
 
     const action = button.dataset.action;
-    const categoryId = button.dataset.id;
 
-    if (!action || !categoryId) return;
+    if (!action) return;
 
-    const category = categoriesData.find(
+    const card = button.closest('[data-category-id]');
+
+    if (!card) return;
+
+    const categoryId = card.dataset.categoryId;
+    const collectionId = card.dataset.collectionId;
+
+    const collection = getCollectionById(collectionId);
+
+    if (!collection) {
+      notify('Category collection could not be found.', 'error');
+      return;
+    }
+
+    const category = (collection.categories || []).find(
       item => item.id === categoryId
     );
 
-    if (!category) return;
+    if (!category) {
+      notify('Category could not be found.', 'error');
+      return;
+    }
+
+    const categoryWithCollection = {
+      ...category,
+      _collectionId: collection.id,
+      _collectionName: collection.name || collection.id
+    };
 
     if (action === 'edit') {
-      openCategoryModal(category);
+      openCategoryModal(
+        categoryWithCollection,
+        collection.id
+      );
       return;
     }
 
     if (action === 'delete') {
-      const collection = getSelectedCollection();
-
-      if (!collection) return;
-
       const confirmed = window.confirm(
-        `Delete "${category.name}" category? This action cannot be undone.`
+        `Delete "${category.name}" category from "${collection.name || collection.id}"? This action cannot be undone.`
       );
 
       if (!confirmed) return;
@@ -819,7 +1051,7 @@ export function bindEvents() {
           category.id
         );
 
-        await refreshCategories(collection.id);
+        await refreshCategories(getSelectedCollectionId());
 
         notify('Category deleted successfully.', 'success');
 
@@ -854,6 +1086,8 @@ export function getLoadedCollections() {
 // ========================================
 
 export function cleanup() {
+  closeCategoryModal();
+
   pageElement = null;
   collectionsData = [];
   categoriesData = [];
