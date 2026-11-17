@@ -2,10 +2,43 @@
 'use strict';
 
 import {
-  createElement
+  createElement,
+  createSlug,
+  showToast,
+  confirmAction,
+  setButtonLoading
 } from '../helpers.js';
 
 import { api } from '../api.js';
+
+
+
+// ========================================
+// Font Awesome Loader
+// ========================================
+
+function loadFontAwesome() {
+  const existing = document.querySelector(
+    'link[data-font-awesome]'
+  );
+
+  if (existing) return;
+
+  const link = document.createElement('link');
+
+  link.rel = 'stylesheet';
+  link.href =
+    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css';
+
+  link.dataset.fontAwesome = 'true';
+
+  document.head.appendChild(link);
+}
+
+
+
+
+
 
 // ========================================
 // Collections Page State
@@ -13,9 +46,64 @@ import { api } from '../api.js';
 
 let pageElement = null;
 let collectionsData = [];
+let activeModal = null;
+let isSaving = false;
 
 // ========================================
-// Create Element Helper
+// Icon Helpers
+// ========================================
+
+function isFontAwesomeIcon(value = '') {
+  const classes = String(value)
+    .trim()
+    .split(/\s+/);
+
+  const validStyles = [
+    'fa-solid',
+    'fa-regular',
+    'fa-brands',
+    'fa-light',
+    'fa-thin',
+    'fa-duotone',
+    'fas',
+    'far',
+    'fab',
+    'fal',
+    'fat'
+  ];
+
+  return (
+    classes.length >= 2 &&
+    validStyles.includes(classes[0]) &&
+    classes.every(className =>
+      /^fa-[a-z0-9-]+$/.test(className) ||
+      validStyles.includes(className)
+    )
+  );
+}
+
+function renderIconContent(container, iconValue = '') {
+  container.replaceChildren();
+
+  const value = String(iconValue || '').trim();
+
+  if (isFontAwesomeIcon(value)) {
+    const iconElement = createElement('i', {
+      className: value,
+      attributes: {
+        'aria-hidden': 'true'
+      }
+    });
+
+    container.appendChild(iconElement);
+    return;
+  }
+
+  container.textContent = value || '📁';
+}
+
+// ========================================
+// Helpers
 // ========================================
 
 function createMessage(className, titleText, descriptionText) {
@@ -36,6 +124,22 @@ function createMessage(className, titleText, descriptionText) {
   return wrapper;
 }
 
+function getCollectionId(name) {
+  const slug = createSlug(name);
+
+  if (!slug) {
+    return `collection-${Date.now()}`;
+  }
+
+  return slug.slice(0, 128);
+}
+
+function getCollectionById(id) {
+  return collectionsData.find(
+    collection => collection.id === id
+  );
+}
+
 // ========================================
 // Render Collection Item
 // ========================================
@@ -44,43 +148,142 @@ function renderCollectionItem(collection) {
   const item = createElement('article', {
     className: 'collection-card',
     attributes: {
-      'data-collection-name': collection.name || collection.id || ''
+      'data-collection-id': collection.id || ''
     }
   });
 
+  // Header
   const header = createElement('div', {
     className: 'collection-card-header'
   });
 
+  const icon = createElement('div', {
+    className: 'collection-icon',
+    attributes: {
+      'aria-hidden': 'true'
+    }
+  });
+
+  renderIconContent(icon, collection.icon);
+
+  const info = createElement('div', {
+    className: 'collection-info'
+  });
+
   const name = createElement('h3', {
     className: 'collection-name',
-    text: collection.name || collection.id || 'Unnamed Collection'
+    text: collection.name || 'Unnamed Collection'
   });
-
-  const status = createElement('span', {
-    className: collection.active
-      ? 'status-badge status-active'
-      : 'status-badge status-inactive',
-    text: collection.active ? 'Active' : 'Inactive'
-  });
-
-  header.append(name, status);
 
   const id = createElement('p', {
     className: 'collection-id',
     text: `ID: ${collection.id || 'N/A'}`
   });
 
+  info.append(name, id);
+
+  const status = createElement('span', {
+    className: collection.active
+      ? 'status-badge status-active collection-status'
+      : 'status-badge status-inactive collection-status',
+    text: collection.active ? 'Active' : 'Inactive'
+  });
+
+  header.append(icon, info, status);
+
+  // Statistics
+  const stats = createElement('div', {
+    className: 'collection-card-stats'
+  });
+
   const categoriesCount = Array.isArray(collection.categories)
     ? collection.categories.length
     : 0;
 
-  const count = createElement('p', {
-    className: 'collection-category-count',
-    text: `Categories: ${categoriesCount}`
+  const categoryStat = createElement('div', {
+    className: 'collection-stat'
   });
 
-  item.append(header, id, count);
+  categoryStat.append(
+    createElement('span', {
+      className: 'collection-stat-label',
+      text: 'Categories'
+    }),
+    createElement('strong', {
+      className: 'collection-stat-value',
+      text: categoriesCount
+    })
+  );
+
+  const subcategoryCount = Array.isArray(collection.categories)
+    ? collection.categories.reduce((total, category) => {
+        const subcategories =
+          category.subCategories ??
+          category.subcategories ??
+          [];
+
+        return total + (
+          Array.isArray(subcategories)
+            ? subcategories.length
+            : 0
+        );
+      }, 0)
+    : 0;
+
+  const subcategoryStat = createElement('div', {
+    className: 'collection-stat'
+  });
+
+  subcategoryStat.append(
+    createElement('span', {
+      className: 'collection-stat-label',
+      text: 'Subcategories'
+    }),
+    createElement('strong', {
+      className: 'collection-stat-value',
+      text: subcategoryCount
+    })
+  );
+
+  stats.append(categoryStat, subcategoryStat);
+
+  // Footer
+  const footer = createElement('div', {
+    className: 'collection-card-footer'
+  });
+
+  const actions = createElement('div', {
+    className: 'collection-card-actions'
+  });
+
+  const editButton = createElement('button', {
+    className: 'collection-action-btn',
+    text: 'Edit',
+    attributes: {
+      type: 'button',
+      'data-action': 'edit',
+      'data-id': collection.id
+    }
+  });
+
+  const deleteButton = createElement('button', {
+    className: 'collection-action-btn danger',
+    text: 'Delete',
+    attributes: {
+      type: 'button',
+      'data-action': 'delete',
+      'data-id': collection.id
+    }
+  });
+
+  actions.append(editButton, deleteButton);
+  footer.append(actions);
+
+  item.append(
+    header,
+    stats,
+    footer
+  );
 
   return item;
 }
@@ -103,14 +306,18 @@ function renderCollectionList(collections) {
   if (!collections.length) {
     list.appendChild(
       createMessage(
-        'empty-state',
+        'empty-state collections-empty',
         'No Collections Found',
-        'There are no collections to display.'
+        'Click Add Collection to create your first collection.'
       )
     );
 
     return;
   }
+
+  const grid = createElement('div', {
+    className: 'collections-grid'
+  });
 
   const fragment = document.createDocumentFragment();
 
@@ -120,7 +327,8 @@ function renderCollectionList(collections) {
     );
   });
 
-  list.appendChild(fragment);
+  grid.appendChild(fragment);
+  list.appendChild(grid);
 }
 
 // ========================================
@@ -131,8 +339,13 @@ function filterCollections(searchText = '') {
   const query = searchText.trim().toLowerCase();
 
   const filtered = collectionsData.filter(collection => {
-    const name = String(collection.name || '').toLowerCase();
-    const id = String(collection.id || '').toLowerCase();
+    const name = String(
+      collection.name || ''
+    ).toLowerCase();
+
+    const id = String(
+      collection.id || ''
+    ).toLowerCase();
 
     return (
       name.includes(query) ||
@@ -147,7 +360,9 @@ function filterCollections(searchText = '') {
 // Load Collections From Backend
 // ========================================
 
-async function loadCollections() {
+async function loadCollections({
+  forceRefresh = false
+} = {}) {
   if (!pageElement) return;
 
   const list = pageElement.querySelector(
@@ -165,7 +380,9 @@ async function loadCollections() {
   );
 
   try {
-    const response = await api.taxonomy.load();
+    const response = await api.taxonomy.load({
+      forceRefresh
+    });
 
     if (!pageElement) return;
 
@@ -177,9 +394,14 @@ async function loadCollections() {
 
     collectionsData = response.collections;
 
-    renderCollectionList(collectionsData);
+    const searchInput = pageElement.querySelector(
+      '#collection-search'
+    );
 
-    // Notify other pages or modules.
+    filterCollections(
+      searchInput?.value || ''
+    );
+
     window.dispatchEvent(
       new CustomEvent('taxonomy:loaded', {
         detail: {
@@ -219,10 +441,481 @@ async function loadCollections() {
 }
 
 // ========================================
+// Modal Helpers
+// ========================================
+
+function closeModal() {
+  if (!activeModal) return;
+
+  activeModal.remove();
+  activeModal = null;
+  isSaving = false;
+}
+
+function createFormField({
+  label,
+  name,
+  value = '',
+  type = 'text',
+  placeholder = '',
+  required = false,
+  maxLength = 100
+}) {
+  const wrapper = createElement('div', {
+    className: 'form-group'
+  });
+
+  const fieldLabel = createElement('label', {
+    text: label,
+    attributes: {
+      for: `collection-field-${name}`
+    }
+  });
+
+  const input = createElement('input', {
+    className: 'form-control',
+    attributes: {
+      id: `collection-field-${name}`,
+      name,
+      type,
+      value,
+      placeholder,
+      required,
+      maxlength: maxLength,
+      autocomplete: 'off'
+    }
+  });
+
+  wrapper.append(fieldLabel, input);
+
+  return {
+    wrapper,
+    input
+  };
+}
+
+// ========================================
+// Open Collection Modal
+// ========================================
+
+function openCollectionModal(collection = null) {
+  if (activeModal) {
+    closeModal();
+  }
+
+  const isEdit = Boolean(collection);
+
+  const overlay = createElement('div', {
+    className: 'modal-overlay',
+    attributes: {
+      id: 'collection-modal-overlay',
+      role: 'presentation'
+    }
+  });
+
+  const modal = createElement('div', {
+    className: 'modal',
+    attributes: {
+      role: 'dialog',
+      'aria-modal': 'true',
+      'aria-labelledby': 'collection-modal-title'
+    }
+  });
+
+  // Header
+  const header = createElement('div', {
+    className: 'modal-header'
+  });
+
+  const headerContent = createElement('div', {
+    className: 'modal-header-content'
+  });
+
+  const title = createElement('h2', {
+    className: 'modal-title',
+    id: 'collection-modal-title',
+    text: isEdit
+      ? 'Edit Collection'
+      : 'Add Collection'
+  });
+
+  const subtitle = createElement('p', {
+    className: 'modal-subtitle',
+    text: isEdit
+      ? 'Update collection information.'
+      : 'Create a new product collection.'
+  });
+
+  headerContent.append(title, subtitle);
+
+  const closeButton = createElement('button', {
+    className: 'modal-close',
+    text: '×',
+    attributes: {
+      type: 'button',
+      'aria-label': 'Close modal'
+    }
+  });
+
+  header.append(headerContent, closeButton);
+
+  // Form
+  const form = createElement('form', {
+    className: 'modal-body form-container',
+    attributes: {
+      id: 'collection-form',
+      novalidate: false
+    }
+  });
+
+  const nameField = createFormField({
+    label: 'Collection Name',
+    name: 'name',
+    value: collection?.name || '',
+    placeholder: 'Example: Men, Women, Kids',
+    required: true,
+    maxLength: 100
+  });
+
+  const iconField = createFormField({
+    label: 'Icon (Optional)',
+    name: 'icon',
+    value: collection?.icon || '',
+    placeholder: 'Example: 🎁 or fa-solid fa-gift',
+    maxLength: 200
+  });
+
+  // Icon Preview
+  const iconPreviewWrapper = createElement('div', {
+    className: 'form-group collection-icon-preview-group'
+  });
+
+  const previewLabel = createElement('label', {
+    text: 'Icon Preview'
+  });
+
+  const iconPreview = createElement('div', {
+    className: 'collection-icon collection-icon-preview',
+    attributes: {
+      'aria-label': 'Collection icon preview'
+    }
+  });
+
+  const iconHelp = createElement('small', {
+    className: 'form-hint',
+    text: 'Enter an emoji or Font Awesome class, for example: fa-solid fa-gift'
+  });
+
+  renderIconContent(
+    iconPreview,
+    collection?.icon || ''
+  );
+
+  iconPreviewWrapper.append(
+    previewLabel,
+    iconPreview,
+    iconHelp
+  );
+
+  iconField.input.addEventListener('input', () => {
+    renderIconContent(
+      iconPreview,
+      iconField.input.value
+    );
+  });
+
+  form.append(
+    nameField.wrapper,
+    iconField.wrapper,
+    iconPreviewWrapper
+  );
+
+  // Collection ID
+  const idField = createFormField({
+    label: 'Collection ID',
+    name: 'id',
+    value: collection?.id || '',
+    placeholder: 'Automatically generated from name',
+    required: true,
+    maxLength: 128
+  });
+
+  if (isEdit) {
+    idField.input.readOnly = true;
+    idField.input.classList.add('is-readonly');
+  } else {
+    idField.input.readOnly = true;
+  }
+
+  form.appendChild(idField.wrapper);
+
+  // Active checkbox
+  const activeWrapper = createElement('div', {
+    className: 'form-group'
+  });
+
+  const activeLabel = createElement('label', {
+    className: 'checkbox-label'
+  });
+
+  const activeInput = createElement('input', {
+    attributes: {
+      type: 'checkbox',
+      name: 'active',
+      checked: collection
+        ? collection.active !== false
+        : true
+    }
+  });
+
+  const activeText = createElement('span', {
+    text: 'Active Collection'
+  });
+
+  activeLabel.append(activeInput, activeText);
+  activeWrapper.appendChild(activeLabel);
+
+  form.appendChild(activeWrapper);
+
+  // ID preview for new collection
+  if (!isEdit) {
+    nameField.input.addEventListener('input', () => {
+      idField.input.value = getCollectionId(
+        nameField.input.value
+      );
+    });
+  }
+
+  // Footer
+  const footer = createElement('div', {
+    className: 'modal-footer'
+  });
+
+  const cancelButton = createElement('button', {
+    className: 'btn btn-secondary',
+    text: 'Cancel',
+    attributes: {
+      type: 'button'
+    }
+  });
+
+  const saveButton = createElement('button', {
+    className: 'btn btn-primary',
+    text: isEdit
+      ? 'Save Changes'
+      : 'Create Collection',
+    attributes: {
+      type: 'submit',
+      form: 'collection-form'
+    }
+  });
+
+  footer.append(cancelButton, saveButton);
+
+  modal.append(
+    header,
+    form,
+    footer
+  );
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  activeModal = overlay;
+
+  requestAnimationFrame(() => {
+    overlay.classList.add('active');
+    nameField.input.focus();
+  });
+
+  // Close events
+  closeButton.addEventListener('click', closeModal);
+  cancelButton.addEventListener('click', closeModal);
+
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) {
+      closeModal();
+    }
+  });
+
+  // Form submit
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+
+    if (isSaving) return;
+
+    const name = nameField.input.value.trim();
+    const icon = iconField.input.value.trim();
+    const active = activeInput.checked;
+
+    if (!name) {
+      showToast(
+        'Collection name is required.',
+        'warning'
+      );
+
+      nameField.input.focus();
+      return;
+    }
+
+    if (name.length > 100) {
+      showToast(
+        'Collection name cannot exceed 100 characters.',
+        'warning'
+      );
+
+      return;
+    }
+
+    const id = isEdit
+      ? collection.id
+      : getCollectionId(name);
+
+    if (!id || id.length > 128) {
+      showToast(
+        'Invalid collection ID.',
+        'error'
+      );
+
+      return;
+    }
+
+    const payload = {
+      name,
+      active,
+      icon
+    };
+
+    isSaving = true;
+
+    setButtonLoading(
+      saveButton,
+      true,
+      'Saving...'
+    );
+
+    cancelButton.disabled = true;
+    closeButton.disabled = true;
+
+    try {
+      if (isEdit) {
+        await api.taxonomy.updateCollection(
+          collection.id,
+          payload
+        );
+
+        showToast(
+          'Collection updated successfully.',
+          'success'
+        );
+
+      } else {
+        await api.taxonomy.createCollection({
+          id,
+          ...payload
+        });
+
+        showToast(
+          'Collection created successfully.',
+          'success'
+        );
+      }
+
+      api.taxonomy.clearCache();
+
+      closeModal();
+
+      await loadCollections({
+        forceRefresh: true
+      });
+
+    } catch (error) {
+      console.error(
+        '[COLLECTIONS] Save failed:',
+        error
+      );
+
+      showToast(
+        error.message || 'Unable to save collection.',
+        'error',
+        5000
+      );
+
+      isSaving = false;
+
+      setButtonLoading(
+        saveButton,
+        false
+      );
+
+      cancelButton.disabled = false;
+      closeButton.disabled = false;
+    }
+  });
+}
+
+// ========================================
+// Delete Collection
+// ========================================
+
+async function deleteCollection(collectionId) {
+  const collection = getCollectionById(collectionId);
+
+  if (!collection) {
+    showToast(
+      'Collection not found.',
+      'error'
+    );
+
+    return;
+  }
+
+  const categoryCount = Array.isArray(collection.categories)
+    ? collection.categories.length
+    : 0;
+
+  const confirmed = confirmAction(
+    `Delete "${collection.name}"?\n\n` +
+    `This will also remove its ${categoryCount} categories ` +
+    `and their subcategories. This action cannot be undone.`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    await api.taxonomy.deleteCollection(collectionId);
+
+    api.taxonomy.clearCache();
+
+    showToast(
+      'Collection deleted successfully.',
+      'success'
+    );
+
+    await loadCollections({
+      forceRefresh: true
+    });
+
+  } catch (error) {
+    console.error(
+      '[COLLECTIONS] Delete failed:',
+      error
+    );
+
+    showToast(
+      error.message || 'Unable to delete collection.',
+      'error',
+      5000
+    );
+  }
+}
+
+// ========================================
 // Render Page
 // ========================================
 
 export async function render() {
+   loadFontAwesome();
   const container = createElement('section', {
     className: 'page collections-page',
     attributes: {
@@ -262,22 +955,28 @@ export async function render() {
 
   header.append(heading, addButton);
 
-  // Search
+  // Toolbar
   const toolbar = createElement('div', {
     className: 'collections-toolbar'
   });
 
+  const toolbarLeft = createElement('div', {
+    className: 'collections-toolbar-left'
+  });
+
   const searchInput = createElement('input', {
-    className: 'form-control',
+    className: 'form-control collection-search',
     attributes: {
       type: 'search',
       id: 'collection-search',
       placeholder: 'Search collections...',
-      autocomplete: 'off'
+      autocomplete: 'off',
+      'aria-label': 'Search collections'
     }
   });
 
-  toolbar.appendChild(searchInput);
+  toolbarLeft.appendChild(searchInput);
+  toolbar.appendChild(toolbarLeft);
 
   // List
   const listContainer = createElement('div', {
@@ -296,7 +995,6 @@ export async function render() {
   pageElement = container;
   collectionsData = [];
 
-  // Load from backend.
   await loadCollections();
 
   return container;
@@ -323,9 +1021,7 @@ export function bindEvents() {
 
   // Add Collection
   addButton?.addEventListener('click', () => {
-    window.dispatchEvent(
-      new CustomEvent('collections:add')
-    );
+    openCollectionModal();
   });
 
   // Search
@@ -333,12 +1029,46 @@ export function bindEvents() {
     filterCollections(searchInput.value);
   });
 
+  // Collection actions
+  list?.addEventListener('click', event => {
+    const button = event.target.closest(
+      'button[data-action]'
+    );
+
+    if (!button || !list.contains(button)) {
+      return;
+    }
+
+    const action = button.dataset.action;
+    const collectionId = button.dataset.id;
+
+    if (!collectionId) return;
+
+    if (action === 'edit') {
+      const collection = getCollectionById(
+        collectionId
+      );
+
+      if (collection) {
+        openCollectionModal(collection);
+      }
+
+      return;
+    }
+
+    if (action === 'delete') {
+      deleteCollection(collectionId);
+    }
+  });
+
   // Retry
   list?.addEventListener('click', event => {
     if (
       event.target.closest('#retry-collections-btn')
     ) {
-      loadCollections();
+      loadCollections({
+        forceRefresh: true
+      });
     }
   });
 }
@@ -356,6 +1086,9 @@ export function getCollections() {
 // ========================================
 
 export function cleanup() {
+  closeModal();
+
   pageElement = null;
   collectionsData = [];
+  isSaving = false;
 }
