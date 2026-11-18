@@ -89,6 +89,7 @@ import {
 import {
   initLotCreate,
   setLotCreateProductId,
+  setLotCreatePreferredLotId,
   resetLotCreate
 } from './lot/lot-create.js';
 
@@ -1009,6 +1010,7 @@ export async function initProductForm({
     })
   });
   setLotCreateProductId(currentProductId);
+  setLotCreatePreferredLotId(lotId);
 
   await initProductCategory({ force: true });
 
@@ -1398,6 +1400,7 @@ export function cleanupProductForm() {
   resetLotCost();
   resetLotHistory();
   setLotCreateProductId(null);
+  setLotCreatePreferredLotId(null);
 
   activeContainer = null;
   currentProductId = null;

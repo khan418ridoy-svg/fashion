@@ -126,6 +126,18 @@ function getVariantBuyPrice(variant = {}, product = {}, lotInput = {}) {
   ) ?? 0;
 }
 
+function getVariantAverageBuyRate(variant = {}, product = {}) {
+  return firstMoneyValue(
+    variant.currentAverageBuyRate,
+    variant.averageBuyRate,
+    variant.averageBuyPrice,
+    variant.avgBuyRate,
+    variant.buyPrice,
+    variant.cost?.buyPrice,
+    getProductBuyPrice(product)
+  ) ?? 0;
+}
+
 function createDefaultProductVariant(productId, product = {}) {
   const productSku = cleanString(
     product.sku || product.basic?.sku,
@@ -638,7 +650,24 @@ async function createProductLot(productId, payload = {}) {
         );
       }
 
-      variant.stock = currentStock + quantity;
+      const nextStock = currentStock + quantity;
+      const previousAverageBuyRate = getVariantAverageBuyRate(
+        variant,
+        product
+      );
+      const newStockBuyRate = purchaseAllocations[index].unitCost;
+      const currentAverageBuyRate = roundMoney(
+        nextStock > 0
+          ? (
+              (previousAverageBuyRate * currentStock) +
+              (newStockBuyRate * quantity)
+            ) / nextStock
+          : newStockBuyRate
+      );
+
+      variant.stock = nextStock;
+      variant.currentAverageBuyRate = currentAverageBuyRate;
+      variant.averageBuyRate = currentAverageBuyRate;
 
       addedQuantity += quantity;
 

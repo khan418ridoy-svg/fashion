@@ -1883,6 +1883,18 @@
   gap: 20px;
 }
 
+.purchase-lots-header-actions,
+.purchase-lot-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.purchase-lots-page .lots-summary {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
 .lots-filters {
   padding: 16px;
   border: 1px solid var(--product-border);
@@ -1908,6 +1920,296 @@
   border: 1px solid var(--product-border);
   border-radius: var(--radius-lg, 14px);
   background: var(--product-surface);
+}
+
+.purchase-lots-management-table {
+  min-width: 1180px;
+}
+
+.purchase-lots-management-table td small,
+.purchase-lot-products-table td small,
+.purchase-lot-variant-table td small {
+  display: block;
+  margin-top: 4px;
+  color: var(--product-text-muted);
+  font-size: 11px;
+}
+
+.purchase-lot-row-actions {
+  flex-wrap: nowrap;
+}
+
+.purchase-lot-delete-button {
+  border: 1px solid #fecaca;
+  background: var(--product-danger-soft);
+  color: #b91c1c;
+}
+
+.purchase-lot-delete-button:hover:not(:disabled) {
+  border-color: var(--product-danger);
+  background: var(--product-danger);
+  color: #ffffff;
+}
+
+.purchase-lot-delete-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lot-status-badge.partial {
+  background: var(--product-warning-soft);
+  color: #92400e;
+}
+
+.purchase-lot-management-modal {
+  width: min(760px, 100%);
+}
+
+.purchase-lot-selector-modal {
+  width: min(620px, 100%);
+}
+
+.purchase-lot-details-modal {
+  width: min(1280px, 100%);
+}
+
+.purchase-lot-management-modal .product-modal-header,
+.purchase-lot-selector-modal .product-modal-header,
+.purchase-lot-details-modal .product-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.purchase-lot-modal-close {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--product-border);
+  border-radius: 50%;
+  background: var(--product-surface);
+  color: var(--product-text-secondary);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.purchase-lot-modal-close:hover {
+  border-color: #c7d2fe;
+  background: var(--product-accent-soft);
+  color: var(--product-accent-dark);
+}
+
+.purchase-lot-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 20px;
+}
+
+.purchase-lot-form-wide {
+  grid-column: 1 / -1;
+}
+
+.purchase-lot-selector-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px;
+}
+
+.purchase-lot-details-content {
+  min-height: 240px;
+  padding: 20px;
+  overflow-x: hidden;
+}
+
+.purchase-lot-details-actions {
+  border-top: 1px solid var(--product-border);
+}
+
+.purchase-lot-report-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.purchase-lot-report-card {
+  display: flex;
+  min-width: 0;
+  min-height: 92px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  padding: 14px 16px;
+  border: 1px solid var(--product-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--product-bg);
+}
+
+.purchase-lot-report-card span,
+.purchase-lot-report-meta span {
+  color: var(--product-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.purchase-lot-report-card strong {
+  color: var(--product-text);
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.profit-positive strong,
+.profit-positive {
+  color: #15803d !important;
+}
+
+.profit-negative strong,
+.profit-negative {
+  color: #dc2626 !important;
+}
+
+.profit-neutral strong,
+.profit-neutral {
+  color: var(--product-text-secondary) !important;
+}
+
+.purchase-lot-report-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.purchase-lot-report-meta > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid var(--product-border);
+  border-radius: var(--radius-sm, 6px);
+}
+
+.purchase-lot-report-meta strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.purchase-lot-products-section {
+  margin-top: 22px;
+}
+
+.purchase-lot-section-heading h4 {
+  margin: 0;
+  color: var(--product-text);
+  font-size: 16px;
+}
+
+.purchase-lot-section-heading p {
+  margin: 5px 0 12px;
+  color: var(--product-text-secondary);
+  font-size: 12px;
+}
+
+.purchase-lot-products-table-wrap,
+.purchase-lot-variant-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--product-border);
+  border-radius: var(--radius-md, 10px);
+}
+
+.purchase-lot-products-table,
+.purchase-lot-variant-table {
+  width: 100%;
+  min-width: 1080px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.purchase-lot-variant-table {
+  min-width: 700px;
+}
+
+.purchase-lot-products-table th,
+.purchase-lot-products-table td,
+.purchase-lot-variant-table th,
+.purchase-lot-variant-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--product-border);
+  vertical-align: top;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.purchase-lot-products-table th,
+.purchase-lot-variant-table th {
+  background: var(--product-bg);
+  color: var(--product-text-secondary);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.purchase-lot-products-table tbody tr:last-child td,
+.purchase-lot-variant-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.purchase-lot-products-table td:first-child {
+  min-width: 220px;
+  white-space: normal;
+}
+
+.purchase-lot-variant-details {
+  margin-top: 8px;
+}
+
+.purchase-lot-variant-details summary {
+  color: var(--product-accent-dark);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.purchase-lot-variant-table-wrap {
+  margin-top: 8px;
+  background: var(--product-surface);
+}
+
+.purchase-lot-report-note {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--product-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--product-bg);
+}
+
+.purchase-lot-report-note p {
+  margin: 6px 0 0;
+  color: var(--product-text-secondary);
+  white-space: pre-line;
+}
+
+.purchase-lot-details-loading,
+.purchase-lot-details-error {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  padding: 24px;
+  color: var(--product-text-secondary);
+  text-align: center;
+}
+
+.purchase-lot-details-error {
+  color: var(--product-danger);
 }
 
 .lot-row[data-product-id] {
@@ -2062,6 +2364,19 @@
   .product-view-image {
     width: 120px;
     height: 120px;
+  }
+
+  .purchase-lots-header-actions {
+    width: 100%;
+  }
+
+  .purchase-lots-header-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .purchase-lot-report-summary,
+  .purchase-lot-report-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2265,6 +2580,34 @@
     white-space: normal;
     line-height: 1.35;
     overflow-wrap: anywhere;
+  }
+
+  .purchase-lots-header-actions,
+  .purchase-lot-row-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .purchase-lots-header-actions .btn,
+  .purchase-lot-row-actions .btn {
+    width: 100%;
+  }
+
+  .purchase-lot-form,
+  .purchase-lot-report-summary,
+  .purchase-lot-report-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-lot-form-wide {
+    grid-column: auto;
+  }
+
+  .purchase-lot-form,
+  .purchase-lot-selector-body,
+  .purchase-lot-details-content {
+    padding-right: 15px;
+    padding-left: 15px;
   }
 
   .cloudinary-library-item-info strong,

@@ -162,6 +162,17 @@ function variantToken(value, fallback) {
   return token || fallback;
 }
 
+function firstNonNegativeNumber(...values) {
+  for (const value of values) {
+    if (value === '' || value === null || value === undefined) continue;
+
+    const number = Number(value);
+    if (Number.isFinite(number) && number >= 0) return number;
+  }
+
+  return null;
+}
+
 function normalizeInventoryVariants(variants, productSku, existingVariants = []) {
   const usedSkus = new Set();
 
@@ -206,6 +217,12 @@ function normalizeInventoryVariants(variants, productSku, existingVariants = [])
     usedSkus.add(variantSku);
 
     const stock = Number(existing?.stock || 0);
+    const currentAverageBuyRate = firstNonNegativeNumber(
+      existing?.currentAverageBuyRate,
+      existing?.averageBuyRate,
+      variant.currentAverageBuyRate,
+      variant.averageBuyRate
+    );
 
     return {
       ...variant,
@@ -215,7 +232,11 @@ function normalizeInventoryVariants(variants, productSku, existingVariants = [])
       variantSku,
       color,
       size,
-      stock: Number.isSafeInteger(stock) && stock >= 0 ? stock : 0
+      stock: Number.isSafeInteger(stock) && stock >= 0 ? stock : 0,
+      ...(currentAverageBuyRate === null ? {} : {
+        currentAverageBuyRate,
+        averageBuyRate: currentAverageBuyRate
+      })
     };
   });
 }

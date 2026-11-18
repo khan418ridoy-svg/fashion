@@ -78,6 +78,7 @@ function createStockLine(data = {}, baseBuyPrice = 0) {
     buyPrice: Number.isFinite(Number(newStockBuyRate))
       ? Number(newStockBuyRate)
       : 0,
+    buyRateEdited: data.buyRateEdited === true,
     currentStock: Math.max(
       0,
       normalizeQuantity(data.currentStock ?? data.stock ?? 0)
@@ -87,6 +88,89 @@ function createStockLine(data = {}, baseBuyPrice = 0) {
     ),
     isDefault: data.isDefault === true
   };
+}
+
+function addAverageRateSummary(map, key, quantity, cost) {
+  const normalizedKey = String(key || '').trim().toUpperCase();
+  if (!normalizedKey || quantity <= 0 || cost < 0) return;
+
+  const current = map.get(normalizedKey) || { quantity: 0, cost: 0 };
+  current.quantity += quantity;
+  current.cost = roundMoney(current.cost + cost);
+  map.set(normalizedKey, current);
+}
+
+export function setLotCurrentAverageBuyRates(lots = []) {
+  if (!Array.isArray(lots) || !stockLines.length) return false;
+
+  const byVariantId = new Map();
+  const bySku = new Map();
+
+  lots.forEach(lot => {
+    const variants = Array.isArray(lot?.variants) ? lot.variants : [];
+
+    variants.forEach(variant => {
+      const originalQuantity = Math.max(
+        0,
+        normalizeQuantity(variant.quantity)
+      );
+      const remainingQuantity = Math.max(
+        0,
+        normalizeQuantity(
+          variant.remainingQuantity ?? originalQuantity
+        )
+      );
+      if (remainingQuantity <= 0) return;
+
+      const storedUnitRate = Number(
+        variant.unitPurchaseCost ?? variant.buyPrice
+      );
+      const purchaseCost = Number(variant.purchaseCost);
+      const unitRate = Number.isFinite(storedUnitRate) && storedUnitRate >= 0
+        ? storedUnitRate
+        : originalQuantity > 0 && Number.isFinite(purchaseCost) && purchaseCost >= 0
+          ? purchaseCost / originalQuantity
+          : null;
+
+      if (unitRate === null) return;
+
+      const remainingCost = roundMoney(unitRate * remainingQuantity);
+      addAverageRateSummary(
+        byVariantId,
+        variant.variantId || variant.id,
+        remainingQuantity,
+        remainingCost
+      );
+      addAverageRateSummary(
+        bySku,
+        variant.sku || variant.variantSku,
+        remainingQuantity,
+        remainingCost
+      );
+    });
+  });
+
+  let changed = false;
+
+  stockLines.forEach(line => {
+    const idKey = String(line.variantId || '').trim().toUpperCase();
+    const skuKey = String(line.sku || '').trim().toUpperCase();
+    const summary = byVariantId.get(idKey) || bySku.get(skuKey);
+
+    if (!summary?.quantity) return;
+
+    const averageBuyRate = roundMoney(summary.cost / summary.quantity);
+    line.currentAverageBuyRate = averageBuyRate;
+
+    if (!line.buyRateEdited) {
+      line.buyPrice = averageBuyRate;
+    }
+
+    changed = true;
+  });
+
+  if (changed) renderLotVariants();
+  return changed;
 }
 
 function getProductStockLines() {
@@ -348,6 +432,9 @@ function handleStockInput(event) {
   stockLines[index].buyPrice = normalizeBuyRate(
     row.querySelector('.lot-stock-buy-price')?.value
   );
+  if (input.matches('.lot-stock-buy-price')) {
+    stockLines[index].buyRateEdited = true;
+  }
   stockLines[index].quantity = normalizeQuantity(
     row.querySelector('.lot-stock-quantity')?.value
   );

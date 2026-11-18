@@ -39,6 +39,7 @@ let ensureProductSaved = null;
 let availableLots = [];
 let isLoadingExistingLots = false;
 let newLotNameDraft = '';
+let preferredExistingLotId = '';
 
 function getElements() {
   return {
@@ -58,6 +59,10 @@ export function setLotCreateProductId(productId) {
 
 export function getLotCreateProductId() {
   return currentProductId;
+}
+
+export function setLotCreatePreferredLotId(lotId) {
+  preferredExistingLotId = String(lotId || '');
 }
 
 export function openLotCreate(productId = currentProductId) {
@@ -128,7 +133,7 @@ function renderExistingLots() {
   const { existingLot } = getElements();
   if (!existingLot) return;
 
-  const previousValue = existingLot.value;
+  const previousValue = preferredExistingLotId || existingLot.value;
   existingLot.replaceChildren();
 
   const createOption = document.createElement('option');
@@ -152,6 +157,7 @@ function renderExistingLots() {
   existingLot.value = availableLots.some(lot => lot.id === previousValue)
     ? previousValue
     : '';
+  preferredExistingLotId = '';
   updateLotMode();
 }
 

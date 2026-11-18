@@ -3,7 +3,11 @@
 
 import { createElement, escapeHTML } from '../../helpers.js';
 import { productApiRequest } from './product-utils.js';
-
+import {
+  openProductView as openViewModal,
+  renderProductView as renderViewModal,
+  closeProductView as closeViewModal
+} from './product-view.js';
 // ========================================
 // STATE
 // ========================================
@@ -118,6 +122,23 @@ function getProductList(result) {
   return candidates.find(Array.isArray) || [];
 }
 
+
+
+function getLotList(result) {
+  const candidates = [
+    result?.data?.lots,
+    result?.lots,
+    result?.data?.items,
+    result?.items,
+    result?.data,
+    result
+  ];
+
+  return candidates.find(Array.isArray) || [];
+}
+
+
+
 function renderStockPickerOptions() {
   if (!pageRoot) return;
 
@@ -226,112 +247,60 @@ function renderBulkActions() {
 }
 
 function closeProductView() {
-  const modal = pageRoot?.querySelector('#product-view-modal');
-
-  if (!modal) return;
-
-  modal.classList.remove('is-open');
-  modal.hidden = true;
-  modal.setAttribute('aria-hidden', 'true');
+  closeViewModal(pageRoot);
   viewProductId = null;
 }
 
 function renderProductView(product) {
-  if (!pageRoot || !product) return;
-
-  const body = pageRoot.querySelector('#product-view-body');
-  const title = pageRoot.querySelector('#product-view-title');
-  const activateButton = pageRoot.querySelector(
-    '[data-products-action="activate-view"]'
-  );
-  const editButton = pageRoot.querySelector(
-    '[data-products-action="edit-view"]'
-  );
-  const status = getProductStatus(product);
-  const image = getProductImage(product);
-  const productName = getProductName(product);
-  const sku = product.sku || product.basic?.sku || '—';
-  const productCode = product.productCode || product.basic?.productCode || '—';
-  const brand = product.brand || product.basic?.brand || '—';
-  const category = product.categoryName ||
-    product.category?.categoryName ||
-    product.category?.name ||
-    product.categoryId ||
-    '—';
-  const variants = Array.isArray(product.variants)
-    ? product.variants.length
-    : 0;
-  const descriptionSource = product.shortDescription ||
-    product.description?.shortDescription ||
-    product.description?.description ||
-    product.description;
-  const description = typeof descriptionSource === 'string'
-    ? descriptionSource
-    : 'No description added.';
-
-  if (title) title.textContent = productName;
-
-  if (body) {
-    body.innerHTML = `
-      <div class="product-view-hero">
-        <div class="product-view-image">
-          ${image
-            ? `<img src="${escapeHTML(image)}" alt="${escapeHTML(productName)}">`
-            : '<span aria-hidden="true">📦</span>'}
-        </div>
-
-        <div class="product-view-heading">
-          <span class="product-status product-status-${escapeHTML(status)}">
-            ${escapeHTML(status)}
-          </span>
-          <h4>${escapeHTML(productName)}</h4>
-          <p>${escapeHTML(String(description))}</p>
-        </div>
-      </div>
-
-      <div class="product-view-stats">
-        <div><span>Current Stock</span><strong>${escapeHTML(formatNumber(getProductStock(product)))}</strong></div>
-        <div><span>Selling Price</span><strong>${escapeHTML(formatMoney(getProductPrice(product)))}</strong></div>
-        <div><span>Variants</span><strong>${variants}</strong></div>
-      </div>
-
-      <dl class="product-view-details">
-        <div><dt>SKU</dt><dd>${escapeHTML(sku)}</dd></div>
-        <div><dt>Product Code</dt><dd>${escapeHTML(productCode)}</dd></div>
-        <div><dt>Brand</dt><dd>${escapeHTML(brand)}</dd></div>
-        <div><dt>Category</dt><dd>${escapeHTML(String(category))}</dd></div>
-      </dl>
-    `;
-  }
-
-  if (activateButton) {
-    activateButton.hidden = status !== 'draft';
-    activateButton.disabled = activationInProgress;
-    activateButton.dataset.productId = product.id;
-    activateButton.textContent = activationInProgress
-      ? 'Activating...'
-      : 'Activate Product';
-  }
-  if (editButton) editButton.dataset.productId = product.id;
+  renderViewModal(pageRoot, product, { activating: activationInProgress });
 }
 
-function openProductView(product) {
-  const modal = pageRoot?.querySelector('#product-view-modal');
+async function openProductView(product) {
+  if (!product?.id) return false;
 
-  if (!modal || !product?.id) return false;
+  const productId = product.id;
 
-  viewProductId = product.id;
-  renderProductView(product);
-  modal.hidden = false;
-  modal.classList.add('is-open');
-  modal.setAttribute('aria-hidden', 'false');
+  viewProductId = productId;
 
-  window.setTimeout(() => (
-    modal.querySelector('[data-products-action="close-view"]')?.focus()
-  ), 0);
+  // আগে modal খুলে দিই, lots পরে load হয়ে আসবে
+  const opened = openViewModal(pageRoot, product, {
+    activating: activationInProgress
+  });
 
-  return true;
+  try {
+    const result = await productApiRequest(
+      `/api/products/${encodeURIComponent(productId)}/lots`,
+      {
+        method: 'GET',
+        ...(currentSignal ? { signal: currentSignal } : {})
+      }
+    );
+
+    if (currentSignal?.aborted || !pageRoot || viewProductId !== productId) {
+      return opened;
+    }
+
+    const lots = getLotList(result);
+
+    products = products.map(item => (
+      item.id === productId ? { ...item, lots } : item
+    ));
+
+    const updated = products.find(item => item.id === productId);
+    if (updated) renderProductView(updated);
+  } catch (error) {
+    if (error.name === 'AbortError') return opened;
+    console.error('[PRODUCT VIEW LOTS]', error);
+  }
+
+  return opened;
 }
+
+
+
+
+
+
 
 async function activateProductIds(productIds) {
   if (activationInProgress) return false;
@@ -870,7 +839,8 @@ async function loadProducts({ announce = false } = {}) {
 
 async function openProductForm(product = null, {
   openLot = false,
-  focusLots = false
+  focusLots = false,
+  lotId = null
 } = {}) {
   if (!pageRoot || formOpen || formOpening) return false;
 
@@ -917,6 +887,7 @@ async function openProductForm(product = null, {
       await module.initProductForm({
         container: pageRoot,
         productId: product?.id || product?.productId || null,
+        lotId,
         product: product || {},
         existingSlugs: products
           .map(item => item.slug || item.seo?.slug || '')
@@ -1347,7 +1318,7 @@ async function handleProductAction(event) {
 // BIND EVENTS
 // ========================================
 
-export function bindEvents({ container, signal } = {}) {
+export async function bindEvents({ container, signal, options = {} } = {}) {
   if (!container) {
     throw new Error('Products page container পাওয়া যায়নি।');
   }
@@ -1439,7 +1410,43 @@ export function bindEvents({ container, signal } = {}) {
   );
 
   console.info('[PRODUCTS] Dashboard initialized.');
-  void loadProducts();
+  const loaded = await loadProducts();
+
+  if (
+    loaded &&
+    !currentSignal?.aborted &&
+    options?.productId
+  ) {
+    const productId = String(options.productId);
+    let product = products.find(item => item.id === productId);
+
+    if (!product) {
+      try {
+        const result = await productApiRequest(
+          `/api/products/${encodeURIComponent(productId)}`,
+          { method: 'GET', signal: currentSignal }
+        );
+        product = result.product || result.data?.product || result.data;
+
+        if (product) {
+          product = { ...product, id: productId };
+          setProducts([product, ...products]);
+        }
+      } catch (error) {
+        console.error('[PRODUCT LOAD FOR LOT]', error);
+      }
+    }
+
+    if (product) {
+      await openProductForm(product, {
+        openLot: options.openLot === true || Boolean(options.lotId),
+        focusLots: options.focusLots === true,
+        lotId: options.lotId || null
+      });
+    } else {
+      showMessage('Selected Product was not found.', 'warning');
+    }
+  }
 }
 
 // ========================================

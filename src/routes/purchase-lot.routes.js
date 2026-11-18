@@ -33,6 +33,11 @@ router.patch('/:lotId', asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Purchase Lot updated.', lot });
 }));
 
+router.delete('/:lotId', asyncHandler(async (req, res) => {
+  const result = await service.deletePurchaseLot(req.params.lotId);
+  res.json({ success: true, message: 'Purchase Lot deleted.', ...result });
+}));
+
 router.get('/:lotId', asyncHandler(async (req, res) => {
   res.json({ success: true, lot: await service.getPurchaseLot(req.params.lotId) });
 }));

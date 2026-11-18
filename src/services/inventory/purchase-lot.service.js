@@ -27,6 +27,12 @@ function money(value, label, fallback = 0) {
   if (!Number.isFinite(number) || number < 0) {
     throw error(`${label} must be a non-negative number.`);
   }
+  return roundMoney(number);
+}
+
+function roundMoney(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return 0;
   return Math.round((number + Number.EPSILON) * 100) / 100;
 }
 
@@ -55,6 +61,7 @@ function normalizeLot(payload = {}) {
 
   return {
     lotName,
+    supplier: cleanString(payload.supplier, 150),
     purchaseCost,
     transportCost,
     otherCost,
@@ -94,11 +101,7 @@ async function createPurchaseLot(payload = {}, admin = {}) {
 
 async function getPurchaseLot(lotId) {
   const lotDocumentId = id(lotId, 'Lot ID');
-  const snapshot = await db.collection(PURCHASE_LOTS).doc(lotDocumentId).get();
-
-  if (!snapshot.exists) {
-    throw error('Purchase Lot not found.', 404, 'LOT_NOT_FOUND');
-  }
+  const lot = await getOrPromotePurchaseLot(lotDocumentId);
 
   const itemSnapshot = await db
     .collection(PRODUCT_LOTS)
@@ -106,8 +109,7 @@ async function getPurchaseLot(lotId) {
     .get();
 
   return {
-    id: snapshot.id,
-    ...snapshot.data(),
+    ...lot,
     items: itemSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
   };
 }
@@ -150,6 +152,9 @@ async function updatePurchaseLot(lotId, payload = {}) {
 
     const update = {
       lotName,
+      supplier: payload.supplier === undefined
+        ? cleanString(existing.supplier, 150)
+        : cleanString(payload.supplier, 150),
       purchaseCost,
       transportCost,
       otherCost,
@@ -233,6 +238,7 @@ async function promoteLegacyLot(lotDocumentId) {
       id: lotDocumentId,
       lotNumber,
       lotName,
+      supplier: cleanString(legacy.supplier, 150),
       purchaseCost,
       transportCost,
       otherCost,
@@ -346,14 +352,66 @@ async function addProductStock(lotId, payload = {}) {
   };
 }
 
-async function listLegacyLots() {
-  const snapshot = await db
+async function deletePurchaseLot(lotId) {
+  const lotDocumentId = id(lotId, 'Lot ID');
+  const lotRef = db.collection(PURCHASE_LOTS).doc(lotDocumentId);
+  const legacyRef = db.collection(PRODUCT_LOTS).doc(lotDocumentId);
+  const itemsQuery = db
     .collection(PRODUCT_LOTS)
-    .orderBy('purchaseDate', 'desc')
-    .limit(100)
-    .get();
+    .where('parentLotId', '==', lotDocumentId);
 
-  const ungrouped = snapshot.docs
+  return db.runTransaction(async transaction => {
+    const snapshot = await transaction.get(lotRef);
+
+    if (!snapshot.exists) {
+      const legacySnapshot = await transaction.get(legacyRef);
+
+      if (legacySnapshot.exists) {
+        throw error(
+          'This Lot contains Product stock and cannot be deleted.',
+          409,
+          'LOT_NOT_EMPTY'
+        );
+      }
+
+      throw error('Purchase Lot not found.', 404, 'LOT_NOT_FOUND');
+    }
+
+    const itemSnapshot = await transaction.get(itemsQuery);
+    const lot = snapshot.data() || {};
+    const productIds = Array.isArray(lot.productIds) ? lot.productIds : [];
+    const hasInventory = !itemSnapshot.empty ||
+      productIds.length > 0 ||
+      Number(lot.productCount || 0) > 0 ||
+      Number(lot.totalQuantity || 0) > 0;
+
+    if (hasInventory) {
+      throw error(
+        'Only an empty Lot can be deleted. Product stock and sales history must be preserved.',
+        409,
+        'LOT_NOT_EMPTY'
+      );
+    }
+
+    transaction.delete(lotRef);
+
+    return {
+      id: lotDocumentId,
+      deleted: true
+    };
+  });
+}
+
+async function listLegacyLots(sourceDocs = null) {
+  const docs = Array.isArray(sourceDocs)
+    ? sourceDocs
+    : (await db
+        .collection(PRODUCT_LOTS)
+        .orderBy('purchaseDate', 'desc')
+        .limit(100)
+        .get()).docs;
+
+  const ungrouped = docs
     .map(doc => ({ id: doc.id, ...doc.data() }))
     .filter(item => !item.parentLotId);
 
@@ -376,64 +434,376 @@ async function listLegacyLots() {
 }
 
 async function listPurchaseLots() {
-  const [groupSnapshot, legacyLots] = await Promise.all([
+  const [groupSnapshot, productLotSnapshot] = await Promise.all([
     db.collection(PURCHASE_LOTS).orderBy('createdAt', 'desc').limit(100).get(),
-    listLegacyLots()
+    db.collection(PRODUCT_LOTS).limit(1000).get()
   ]);
+  const productLotRecords = productLotSnapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  }));
+  const childrenByParent = new Map();
 
-  const lots = groupSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  productLotRecords.forEach(item => {
+    if (!item.parentLotId) return;
+    const children = childrenByParent.get(item.parentLotId) || [];
+    children.push(item);
+    childrenByParent.set(item.parentLotId, children);
+  });
+
+  const lots = groupSnapshot.docs.map(doc => {
+    const lot = { id: doc.id, ...doc.data() };
+    const children = childrenByParent.get(doc.id) || [];
+
+    if (!children.length) return lot;
+
+    const productIds = [...new Set(children
+      .map(item => cleanString(item.productId, 128))
+      .filter(Boolean))];
+    const totalQuantity = children.reduce(
+      (total, item) => total + quantity(item.totalQuantity),
+      0
+    );
+    const remainingQuantity = children.reduce(
+      (total, item) => total + quantity(item.remainingQuantity),
+      0
+    );
+    const itemPurchaseCost = roundMoney(children.reduce(
+      (total, item) => total + Number(item.purchaseCost || 0),
+      0
+    ));
+    const purchaseCost = Math.max(
+      Number(lot.purchaseCost || 0),
+      itemPurchaseCost
+    );
+
+    return {
+      ...lot,
+      productIds,
+      productLotIds: children.map(item => item.id),
+      productCount: productIds.length,
+      totalQuantity,
+      remainingQuantity,
+      soldQuantity: Math.max(0, totalQuantity - remainingQuantity),
+      itemPurchaseCost,
+      purchaseCost,
+      totalCost: roundMoney(
+        purchaseCost +
+        Number(lot.transportCost || 0) +
+        Number(lot.otherCost || 0)
+      ),
+      status: remainingQuantity <= 0
+        ? 'depleted'
+        : remainingQuantity < totalQuantity
+          ? 'partial'
+          : 'active'
+    };
+  });
+  const legacyLots = await listLegacyLots(productLotSnapshot.docs);
+  const productIds = [...new Set(lots.flatMap(lot => (
+    Array.isArray(lot.productIds) ? lot.productIds : []
+  )).filter(Boolean))];
+  const productRefs = productIds.map(productId => (
+    db.collection(PRODUCTS).doc(productId)
+  ));
+  const productSnapshots = productRefs.length
+    ? await db.getAll(...productRefs)
+    : [];
+  const productNames = new Map(productSnapshots.map(snapshot => [
+    snapshot.id,
+    snapshot.exists
+      ? snapshot.data()?.name || snapshot.data()?.basic?.name || 'Unknown Product'
+      : 'Unknown Product'
+  ]));
+  const enrichedLots = lots.map(lot => {
+    const ids = Array.isArray(lot.productIds) ? lot.productIds : [];
+    const names = ids.map(productId => (
+      productNames.get(productId) || 'Unknown Product'
+    ));
+
+    return {
+      ...lot,
+      productNames: names,
+      productName: names.length > 1
+        ? `${names[0]} +${names.length - 1} more`
+        : names[0] || 'No Products',
+      productCount: Number(lot.productCount ?? ids.length)
+    };
+  });
+
   return {
-    lots: [...lots, ...legacyLots].sort((a, b) => {
+    lots: [...enrichedLots, ...legacyLots].sort((a, b) => {
       const left = a.createdAt?.toMillis?.() || a.createdAt?.getTime?.() || 0;
       const right = b.createdAt?.toMillis?.() || b.createdAt?.getTime?.() || 0;
       return right - left;
     }),
-    count: lots.length + legacyLots.length
+    count: enrichedLots.length + legacyLots.length
   };
 }
 
 async function getLotAnalytics(lotId) {
   const lot = await getPurchaseLot(lotId);
-  const batchIds = new Set(lot.items.map(item => item.id));
-  const allocationSnapshot = await db.collection(ALLOCATIONS).limit(1000).get();
+  const productIds = [...new Set(lot.items
+    .map(item => cleanString(item.productId, 128))
+    .filter(Boolean))];
+  const productRefs = productIds.map(productId => (
+    db.collection(PRODUCTS).doc(productId)
+  ));
+  const [productSnapshots, allocationSnapshots] = await Promise.all([
+    productRefs.length ? db.getAll(...productRefs) : [],
+    Promise.all(productIds.map(productId => (
+      db.collection(ALLOCATIONS)
+        .where('productId', '==', productId)
+        .get()
+    )))
+  ]);
+  const productData = new Map(productSnapshots.map(snapshot => [
+    snapshot.id,
+    snapshot.exists ? snapshot.data() || {} : {}
+  ]));
+  const productReports = new Map();
+  const batchReports = new Map();
 
-  let soldQuantity = 0;
-  let costOfGoods = 0;
-  let revenue = 0;
+  function getProductReport(productId) {
+    if (!productReports.has(productId)) {
+      const product = productData.get(productId) || {};
 
-  for (const doc of allocationSnapshot.docs) {
+      productReports.set(productId, {
+        productId,
+        productName: product.name || product.basic?.name || 'Unknown Product',
+        sku: product.sku || product.basic?.sku || '',
+        purchaseQuantity: 0,
+        remainingQuantity: 0,
+        soldQuantity: 0,
+        purchaseCost: 0,
+        landedCost: 0,
+        costOfGoods: 0,
+        revenue: 0,
+        grossProfit: 0,
+        profitLoss: 0,
+        averageBuyRate: 0,
+        averageSaleRate: 0,
+        inventoryValue: 0,
+        orderCount: 0,
+        batches: [],
+        variants: [],
+        _allocatedSoldQuantity: 0,
+        _orderIds: new Set(),
+        _variants: new Map()
+      });
+    }
+
+    return productReports.get(productId);
+  }
+
+  for (const item of lot.items) {
+    const productId = cleanString(item.productId, 128);
+    if (!productId) continue;
+
+    const report = getProductReport(productId);
+    const purchaseQuantity = quantity(item.totalQuantity);
+    const remainingQuantity = Math.min(
+      purchaseQuantity,
+      quantity(item.remainingQuantity, purchaseQuantity)
+    );
+    const purchaseCost = roundMoney(item.purchaseCost);
+    const landedCost = roundMoney(item.landedCost ?? purchaseCost);
+
+    report.purchaseQuantity += purchaseQuantity;
+    report.remainingQuantity += remainingQuantity;
+    report.purchaseCost = roundMoney(report.purchaseCost + purchaseCost);
+    report.landedCost = roundMoney(report.landedCost + landedCost);
+    report.batches.push({
+      id: item.id,
+      lotNumber: item.lotNumber || item.id,
+      purchaseQuantity,
+      remainingQuantity,
+      purchaseCost,
+      landedCost
+    });
+    batchReports.set(item.id, report);
+
+    for (const variant of Array.isArray(item.variants) ? item.variants : []) {
+      const variantId = cleanString(
+        variant.variantId || variant.id || variant.sku,
+        128
+      ) || [variant.color, variant.size].filter(Boolean).join('|') || 'default';
+      const current = report._variants.get(variantId) || {
+        variantId,
+        sku: cleanString(variant.sku || variant.variantSku, 100),
+        color: cleanString(variant.color, 100),
+        size: cleanString(variant.size, 100),
+        purchaseQuantity: 0,
+        remainingQuantity: 0,
+        purchaseCost: 0,
+        landedCost: 0
+      };
+      const variantQuantity = quantity(variant.quantity);
+      const variantRemaining = Math.min(
+        variantQuantity,
+        quantity(variant.remainingQuantity, variantQuantity)
+      );
+      const variantPurchaseCost = roundMoney(
+        variant.purchaseCost ?? Number(variant.unitPurchaseCost || 0) * variantQuantity
+      );
+      const variantLandedCost = roundMoney(
+        variant.landedCost ?? Number(variant.unitLandedCost || 0) * variantQuantity
+      );
+
+      current.purchaseQuantity += variantQuantity;
+      current.remainingQuantity += variantRemaining;
+      current.purchaseCost = roundMoney(current.purchaseCost + variantPurchaseCost);
+      current.landedCost = roundMoney(current.landedCost + variantLandedCost);
+      report._variants.set(variantId, current);
+    }
+  }
+
+  const allocationDocs = new Map();
+  allocationSnapshots.forEach(snapshot => {
+    snapshot.docs.forEach(doc => allocationDocs.set(doc.id, doc));
+  });
+
+  for (const doc of allocationDocs.values()) {
     const allocation = doc.data() || {};
     if (allocation.status === 'restored') continue;
 
-    for (const item of allocation.items || []) {
-      for (const line of item.allocations || []) {
-        if (!batchIds.has(line.lotId)) continue;
-        soldQuantity += Number(line.quantity || 0);
-        costOfGoods += Number(line.landedCost || 0);
-        revenue += Number(line.revenue || 0);
+    for (const item of Array.isArray(allocation.items) ? allocation.items : []) {
+      for (const line of Array.isArray(item.allocations) ? item.allocations : []) {
+        const report = batchReports.get(line.lotId);
+        if (!report) continue;
+
+        report._allocatedSoldQuantity += quantity(line.quantity);
+        report.costOfGoods = roundMoney(
+          report.costOfGoods + Number(line.landedCost || 0)
+        );
+        report.revenue = roundMoney(
+          report.revenue + Number(line.revenue || 0)
+        );
+        report._orderIds.add(allocation.orderId || doc.id);
       }
     }
   }
 
-  const totalCost = Number(lot.totalCost || 0);
-  const remainingQuantity = Math.max(0, Number(lot.totalQuantity || 0) - soldQuantity);
+  const totalQuantity = [...productReports.values()].reduce(
+    (total, report) => total + report.purchaseQuantity,
+    0
+  ) || Number(lot.totalQuantity || 0);
+  const totalCost = roundMoney(lot.totalCost || 0);
+  const totalItemLandedCost = roundMoney([...productReports.values()].reduce(
+    (total, report) => total + report.landedCost,
+    0
+  ));
+  const unallocatedLotCost = roundMoney(
+    Math.max(0, totalCost - totalItemLandedCost)
+  );
+
+  const products = [...productReports.values()].map(report => {
+    const derivedSoldQuantity = Math.max(
+      0,
+      report.purchaseQuantity - report.remainingQuantity
+    );
+    report.soldQuantity = Math.max(
+      derivedSoldQuantity,
+      report._allocatedSoldQuantity
+    );
+    const costShareBasis = totalItemLandedCost > 0
+      ? report.landedCost / totalItemLandedCost
+      : totalQuantity > 0
+        ? report.purchaseQuantity / totalQuantity
+        : 0;
+    const productExtraCost = roundMoney(unallocatedLotCost * costShareBasis);
+    const soldRatio = report.purchaseQuantity > 0
+      ? Math.min(1, report.soldQuantity / report.purchaseQuantity)
+      : 0;
+    const remainingRatio = report.purchaseQuantity > 0
+      ? Math.min(1, report.remainingQuantity / report.purchaseQuantity)
+      : 0;
+    const realizedExtraCost = roundMoney(productExtraCost * soldRatio);
+    const remainingExtraCost = roundMoney(productExtraCost * remainingRatio);
+
+    report.grossProfit = roundMoney(report.revenue - report.costOfGoods);
+    report.profitLoss = roundMoney(report.grossProfit - realizedExtraCost);
+    report.averageBuyRate = report.purchaseQuantity > 0
+      ? roundMoney(report.purchaseCost / report.purchaseQuantity)
+      : 0;
+    report.averageSaleRate = report.soldQuantity > 0
+      ? roundMoney(report.revenue / report.soldQuantity)
+      : 0;
+    report.inventoryValue = roundMoney(
+      (report.purchaseQuantity > 0
+        ? report.landedCost * remainingRatio
+        : 0) + remainingExtraCost
+    );
+    report.orderCount = report._orderIds.size;
+    report.variants = [...report._variants.values()].map(variant => ({
+      ...variant,
+      soldQuantity: Math.max(
+        0,
+        variant.purchaseQuantity - variant.remainingQuantity
+      ),
+      averageBuyRate: variant.purchaseQuantity > 0
+        ? roundMoney(variant.purchaseCost / variant.purchaseQuantity)
+        : 0,
+      unitLandedCost: variant.purchaseQuantity > 0
+        ? roundMoney(variant.landedCost / variant.purchaseQuantity)
+        : 0
+    }));
+
+    delete report._allocatedSoldQuantity;
+    delete report._orderIds;
+    delete report._variants;
+
+    return report;
+  });
+
+  const soldQuantity = products.reduce(
+    (total, product) => total + product.soldQuantity,
+    0
+  );
+  const remainingQuantity = products.length
+    ? products.reduce((total, product) => total + product.remainingQuantity, 0)
+    : Math.max(0, Number(lot.remainingQuantity || 0));
+  const costOfGoods = roundMoney(products.reduce(
+    (total, product) => total + product.costOfGoods,
+    0
+  ));
+  const revenue = roundMoney(products.reduce(
+    (total, product) => total + product.revenue,
+    0
+  ));
+  const grossProfit = roundMoney(revenue - costOfGoods);
+  const profitLoss = roundMoney(products.reduce(
+    (total, product) => total + product.profitLoss,
+    0
+  ));
+  const inventoryValue = roundMoney(products.reduce(
+    (total, product) => total + product.inventoryValue,
+    0
+  ));
 
   return {
     lotId: lot.id,
     lotNumber: lot.lotNumber,
     lotName: lot.lotName,
-    productCount: lot.productIds?.length || 0,
-    totalQuantity: Number(lot.totalQuantity || 0),
+    supplier: lot.supplier || '',
+    note: lot.note || '',
+    status: lot.status || 'empty',
+    productCount: products.length,
+    totalQuantity,
     soldQuantity,
     remainingQuantity,
     purchaseCost: Number(lot.purchaseCost || 0),
     transportCost: Number(lot.transportCost || 0),
     otherCost: Number(lot.otherCost || 0),
     totalCost,
-    costOfGoods: money(costOfGoods, 'Cost of Goods'),
-    revenue: money(revenue, 'Revenue'),
-    grossProfit: money(Math.max(0, revenue - costOfGoods), 'Gross Profit'),
-    netProfit: Math.round((revenue - totalCost + Number.EPSILON) * 100) / 100
+    costOfGoods,
+    revenue,
+    grossProfit,
+    netProfit: profitLoss,
+    profitLoss,
+    inventoryValue,
+    unallocatedLotCost,
+    products
   };
 }
 
@@ -441,6 +811,7 @@ module.exports = {
   createPurchaseLot,
   updatePurchaseLot,
   addProductStock,
+  deletePurchaseLot,
   listPurchaseLots,
   getPurchaseLot,
   getLotAnalytics

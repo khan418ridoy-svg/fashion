@@ -13,6 +13,7 @@ import {
   escapeProductHTML,
   setProductButtonLoading
 } from '../product-utils.js';
+import { setLotCurrentAverageBuyRates } from './lot-variants.js';
 
 
 // ========================================
@@ -95,7 +96,10 @@ function normalizeLot(data = {}) {
     otherCost: Math.max(0, Number(data.otherCost || 0)),
     note: String(data.note || ''),
     status: String(data.status || 'active').toLowerCase(),
-    createdAt: data.createdAt || null
+    createdAt: data.createdAt || null,
+    variants: Array.isArray(data.variants)
+      ? data.variants.map(variant => ({ ...variant }))
+      : []
   };
 }
 
@@ -328,6 +332,7 @@ export function setProductLots(data = []) {
   lots = data.map(normalizeLot);
 
   renderProductLots();
+  setLotCurrentAverageBuyRates(lots);
 }
 
 
