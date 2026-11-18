@@ -1,10 +1,4 @@
-
 'use strict';
-
-// ========================================
-// LOT CREATE
-// Create New Product Purchase Lot
-// ========================================
 
 import {
   getProductElement,
@@ -12,416 +6,410 @@ import {
   productApiRequest,
   setProductButtonLoading
 } from '../product-utils.js';
-
 import {
   getLotVariantsData,
+  getLotTotalQuantity,
   validateLotVariants,
   resetLotVariants
 } from './lot-variants.js';
-
 import {
   getLotCostData,
   validateLotCost,
   resetLotCost
 } from './lot-history.js';
-
-
-// ========================================
-// CONFIGURATION
-// ========================================
+import { refreshProductLots } from './product-lots.js';
+import { setProductVariantsData } from '../product-variants.js';
+import { setProductInventoryData } from '../product-inventory.js';
 
 const CONFIG = {
   apiUrl: '/api/products',
   modal: '#lot-create-modal',
   form: '#lot-create-form',
-
-  lotNumber: '#lot-number',
-  purchaseDate: '#lot-purchase-date',
-  supplier: '#lot-supplier',
-  purchaseNote: '#lot-purchase-note',
-
+  existingLot: '#lot-existing-lot',
+  lotName: '#lot-name',
   submitButton: '#lot-create-submit',
   cancelButton: '#lot-create-cancel',
   openButton: '#product-lot-create'
 };
 
-
-// ========================================
-// MODULE STATE
-// ========================================
-
 let initialized = false;
 let currentProductId = null;
 let isSubmitting = false;
-
-
-// ========================================
-// GET ELEMENTS
-// ========================================
+let ensureProductSaved = null;
+let availableLots = [];
+let isLoadingExistingLots = false;
+let newLotNameDraft = '';
 
 function getElements() {
   return {
     modal: getProductElement(CONFIG.modal),
     form: getProductElement(CONFIG.form),
-
-    lotNumber: getProductElement(CONFIG.lotNumber),
-    purchaseDate: getProductElement(CONFIG.purchaseDate),
-    supplier: getProductElement(CONFIG.supplier),
-    purchaseNote: getProductElement(CONFIG.purchaseNote),
-
+    existingLot: getProductElement(CONFIG.existingLot),
+    lotName: getProductElement(CONFIG.lotName),
     submitButton: getProductElement(CONFIG.submitButton),
     cancelButton: getProductElement(CONFIG.cancelButton),
     openButton: getProductElement(CONFIG.openButton)
   };
 }
 
-
-// ========================================
-// SET PRODUCT ID
-// ========================================
-
 export function setLotCreateProductId(productId) {
   currentProductId = productId || null;
 }
-
-
-// ========================================
-// GET PRODUCT ID
-// ========================================
 
 export function getLotCreateProductId() {
   return currentProductId;
 }
 
-
-// ========================================
-// OPEN LOT CREATE MODAL
-// ========================================
-
 export function openLotCreate(productId = currentProductId) {
   const elements = getElements();
 
   if (!elements.modal) {
-    showProductMessage(
-      'Lot Create Modal পাওয়া যায়নি।',
-      'error'
-    );
-
+    showProductMessage('Lot form was not found.', 'error');
     return false;
   }
 
   currentProductId = productId || currentProductId || null;
-
   resetLotCreate();
-
-  const dateInput = elements.purchaseDate;
-
-  if (dateInput) {
-    dateInput.value = new Date().toISOString().slice(0, 10);
-  }
-
+  elements.modal.querySelector('#product-global-message')?.remove();
   elements.modal.hidden = false;
   elements.modal.classList.add('is-open');
-
   elements.modal.setAttribute('aria-hidden', 'false');
 
-  if (!currentProductId) {
-    showProductMessage(
-      'Lot form খোলা হয়েছে। Lot save করতে আগে Product save করে Product ID তৈরি করতে হবে।',
-      'info',
-      6000
-    );
-  }
+  void loadExistingLots();
 
+  window.setTimeout(() => elements.lotName?.focus(), 0);
   return true;
 }
 
-
-// ========================================
-// CLOSE LOT CREATE MODAL
-// ========================================
-
 export function closeLotCreate() {
-  const elements = getElements();
+  const { modal } = getElements();
+  if (!modal) return;
 
-  if (!elements.modal) return;
-
-  elements.modal.classList.remove('is-open');
-  elements.modal.hidden = true;
-
-  elements.modal.setAttribute('aria-hidden', 'true');
+  modal.classList.remove('is-open');
+  modal.hidden = true;
+  modal.setAttribute('aria-hidden', 'true');
+  modal.querySelector('#product-global-message')?.remove();
 }
-
-
-// ========================================
-// GET LOT BASIC DATA
-// ========================================
 
 export function getLotCreateData() {
   const elements = getElements();
 
   return {
-    lotNumber: elements.lotNumber?.value.trim() || '',
-    purchaseDate: elements.purchaseDate?.value || '',
-    supplier: elements.supplier?.value.trim() || '',
-    purchaseNote: elements.purchaseNote?.value.trim() || ''
+    existingLotId: elements.existingLot?.value.trim() || '',
+    lotName: elements.lotName?.value.trim() || ''
   };
 }
 
-
-// ========================================
-// VALIDATE LOT DATA
-// ========================================
-
 export function validateLotCreate() {
   const elements = getElements();
-  const data = getLotCreateData();
+  const { existingLotId, lotName } = getLotCreateData();
 
-  if (!currentProductId) {
-    showProductMessage(
-      'Product ID পাওয়া যায়নি।',
-      'error'
-    );
-
-    return false;
-  }
-
-  if (!data.purchaseDate) {
-    showProductMessage(
-      'Purchase Date নির্বাচন করুন।',
-      'warning'
-    );
-
-    elements.purchaseDate?.focus();
-
-    return false;
-  }
-
-  const purchaseDate = new Date(
-    `${data.purchaseDate}T00:00:00`
-  );
-
-  if (Number.isNaN(purchaseDate.getTime())) {
-    showProductMessage(
-      'সঠিক Purchase Date দিন।',
-      'warning'
-    );
-
-    elements.purchaseDate?.focus();
-
-    return false;
-  }
-
-  if (
-    data.lotNumber &&
-    data.lotNumber.length > 60
-  ) {
-    showProductMessage(
-      'Lot Number সর্বোচ্চ 60 অক্ষর হতে পারবে।',
-      'warning'
-    );
-
-    elements.lotNumber?.focus();
-
-    return false;
-  }
-
-  if (data.supplier.length > 150) {
-    showProductMessage(
-      'Supplier Name সর্বোচ্চ 150 অক্ষর হতে পারবে।',
-      'warning'
-    );
-
-    elements.supplier?.focus();
-
-    return false;
-  }
-
-  if (data.purchaseNote.length > 1000) {
-    showProductMessage(
-      'Purchase Note সর্বোচ্চ 1000 অক্ষর হতে পারবে।',
-      'warning'
-    );
-
-    elements.purchaseNote?.focus();
-
+  if (!existingLotId && (!lotName || lotName.length > 100)) {
+    showProductMessage('Enter a Lot Name within 100 characters.', 'warning');
+    elements.lotName?.focus();
     return false;
   }
 
   return true;
 }
 
+function normalizeExistingLot(lot = {}) {
+  return {
+    id: String(lot.id || lot.lotId || ''),
+    lotName: String(lot.lotName || lot.lotNumber || ''),
+    lotNumber: String(lot.lotNumber || lot.id || ''),
+    productName: String(lot.productName || ''),
+    status: String(lot.status || '').toLowerCase(),
+    legacy: lot.legacy === true
+  };
+}
 
-// ========================================
-// CREATE LOT API
-// ========================================
+function renderExistingLots() {
+  const { existingLot } = getElements();
+  if (!existingLot) return;
+
+  const previousValue = existingLot.value;
+  existingLot.replaceChildren();
+
+  const createOption = document.createElement('option');
+  createOption.value = '';
+  createOption.textContent = 'Create a new Lot';
+  existingLot.appendChild(createOption);
+
+  availableLots.forEach(lot => {
+    const option = document.createElement('option');
+    const unavailable = lot.status === 'closed' || lot.status === 'cancelled';
+    const legacyLabel = lot.legacy ? ' · old' : '';
+    const productLabel = lot.productName ? ` · ${lot.productName}` : '';
+
+    option.value = lot.id;
+    option.textContent = `${lot.lotName || lot.lotNumber}${productLabel}${legacyLabel}`;
+    option.disabled = unavailable;
+    existingLot.appendChild(option);
+  });
+
+  existingLot.disabled = false;
+  existingLot.value = availableLots.some(lot => lot.id === previousValue)
+    ? previousValue
+    : '';
+  updateLotMode();
+}
+
+async function loadExistingLots() {
+  if (isLoadingExistingLots) return;
+
+  const { existingLot } = getElements();
+  if (!existingLot) return;
+
+  isLoadingExistingLots = true;
+  existingLot.disabled = true;
+  existingLot.innerHTML = '<option value="">Loading existing Lots...</option>';
+
+  try {
+    const result = await productApiRequest('/api/lots', {
+      method: 'GET'
+    });
+    const source = Array.isArray(result?.lots)
+      ? result.lots
+      : Array.isArray(result?.data?.lots)
+        ? result.data.lots
+        : [];
+
+    availableLots = source
+      .map(normalizeExistingLot)
+      .filter(lot => lot.id);
+
+    renderExistingLots();
+
+  } catch (error) {
+    console.error('[LOT OPTIONS]', error);
+    availableLots = [];
+    existingLot.replaceChildren();
+
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'Create a new Lot';
+    existingLot.appendChild(option);
+    existingLot.disabled = false;
+
+  } finally {
+    isLoadingExistingLots = false;
+  }
+}
+
+function updateLotMode() {
+  const elements = getElements();
+  const selectedId = elements.existingLot?.value || '';
+  const selectedLot = availableLots.find(lot => lot.id === selectedId);
+
+  if (selectedLot) {
+    if (!elements.lotName?.readOnly) {
+      newLotNameDraft = elements.lotName?.value || '';
+    }
+
+    if (elements.lotName) {
+      elements.lotName.value = selectedLot.lotName || selectedLot.lotNumber;
+      elements.lotName.readOnly = true;
+    }
+
+    if (elements.submitButton && !isSubmitting) {
+      elements.submitButton.textContent = 'Add Product to Lot';
+    }
+    return;
+  }
+
+  if (elements.lotName) {
+    const wasReadOnly = elements.lotName.readOnly;
+
+    elements.lotName.readOnly = false;
+
+    if (wasReadOnly) {
+      elements.lotName.value = newLotNameDraft;
+    }
+  }
+
+  if (elements.submitButton && !isSubmitting) {
+    elements.submitButton.textContent = 'Create Lot';
+  }
+}
 
 export async function createProductLot() {
   if (isSubmitting) return false;
-
   if (!validateLotCreate()) return false;
   if (!validateLotVariants()) return false;
   if (!validateLotCost()) return false;
 
   const elements = getElements();
+  const lotData = getLotCreateData();
+  const isExistingLot = Boolean(lotData.existingLotId);
+  const costs = getLotCostData();
+  const variants = getLotVariantsData();
 
   isSubmitting = true;
 
-  setProductButtonLoading(
-    elements.submitButton,
-    true,
-    'Creating Lot...'
-  );
-
   try {
-    const payload = {
-      ...getLotCreateData(),
-      variants: getLotVariantsData(),
-      costs: getLotCostData()
-    };
-
-    // Lot Number optional:
-    // Backend should generate a unique Lot Number
-    // when it is not supplied.
-
-    if (!payload.lotNumber) {
-      delete payload.lotNumber;
-    }
-
-    const result = await productApiRequest(
-      `${CONFIG.apiUrl}/${encodeURIComponent(currentProductId)}/lots`,
-      {
-        method: 'POST',
-        body: JSON.stringify(payload)
+    if (!currentProductId) {
+      if (typeof ensureProductSaved !== 'function') {
+        throw new Error('Product save করা যায়নি।');
       }
-    );
 
-    const createdLot = result.data?.lot || result.data;
-
-    if (!createdLot?.id && !createdLot?.lotId) {
-      throw new Error(
-        'Lot তৈরি হয়েছে কি না নিশ্চিত করা যায়নি: Backend response-এ Lot ID নেই।'
+      setProductButtonLoading(
+        elements.submitButton,
+        true,
+        'Saving Product...'
       );
+
+      const savedProduct = await ensureProductSaved();
+      const savedProductId = String(
+        savedProduct?.id ||
+        savedProduct?.productId ||
+        currentProductId ||
+        ''
+      );
+
+      if (!savedProductId) {
+        return false;
+      }
+
+      currentProductId = savedProductId;
     }
-
-    showProductMessage(
-      'নতুন Purchase Lot তৈরি হয়েছে।',
-      'success'
-    );
-
-    closeLotCreate();
-
-    document.dispatchEvent(
-      new CustomEvent('product:lot-created', {
-        detail: {
-          productId: currentProductId,
-          lot: createdLot
-        }
-      })
-    );
-
-    return createdLot;
-
-  } catch (error) {
-    console.error('[LOT CREATE]', error);
-
-    showProductMessage(
-      error.message || 'Purchase Lot তৈরি করা যায়নি।',
-      'error'
-    );
-
-    return false;
-
-  } finally {
-    isSubmitting = false;
 
     setProductButtonLoading(
       elements.submitButton,
-      false
+      true,
+      isExistingLot ? 'Adding Product...' : 'Creating Lot...'
     );
+
+    const result = isExistingLot
+      ? await productApiRequest(
+          `/api/lots/${encodeURIComponent(lotData.existingLotId)}/items`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              productId: currentProductId,
+              variants,
+              purchaseCost: costs.purchaseCost,
+              note: ''
+            })
+          }
+        )
+      : await productApiRequest(
+          `${CONFIG.apiUrl}/${encodeURIComponent(currentProductId)}/lots`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              lotName: lotData.lotName,
+              variants,
+              totalQuantity: getLotTotalQuantity(),
+              purchaseCost: costs.purchaseCost,
+              transportCost: costs.transportCost,
+              otherCost: costs.otherCost,
+              landedCost: costs.totalCost
+            })
+          }
+        );
+
+    const createdLot = isExistingLot
+      ? result.data?.stockBatch || result.stockBatch
+      : result.lot || result.data?.lot || result.data;
+    const updatedProduct = isExistingLot
+      ? result.data?.product || result.product || null
+      : result.product || result.data?.product || null;
+
+    if (!createdLot?.id && !createdLot?.lotId) {
+      throw new Error('The backend did not return a Lot ID.');
+    }
+
+    if (Array.isArray(updatedProduct?.variants)) {
+      setProductVariantsData(updatedProduct.variants);
+      setProductInventoryData({
+        totalStock: updatedProduct.totalStock,
+        variants: updatedProduct.variants
+      });
+    }
+
+    closeLotCreate();
+    resetLotCreate();
+    showProductMessage(
+      isExistingLot
+        ? 'Product stock added to the selected Purchase Lot.'
+        : 'Purchase Lot created and stock added.',
+      'success'
+    );
+    await refreshProductLots(currentProductId);
+
+    document.dispatchEvent(new CustomEvent('product:lot-created', {
+      detail: {
+        productId: currentProductId,
+        lot: createdLot,
+        product: updatedProduct
+      }
+    }));
+
+    return createdLot;
+  } catch (error) {
+    console.error('[LOT CREATE]', error);
+    showProductMessage(error.message || 'Unable to create the Purchase Lot.', 'error');
+    return false;
+  } finally {
+    isSubmitting = false;
+    setProductButtonLoading(elements.submitButton, false);
+    updateLotMode();
   }
 }
-
-
-// ========================================
-// RESET LOT CREATE FORM
-// ========================================
 
 export function resetLotCreate() {
   const elements = getElements();
 
-  if (elements.form instanceof HTMLFormElement) {
-    elements.form.reset();
-  } else {
-    elements.form?.querySelectorAll('input, textarea, select').forEach(
-      element => {
-        if (element.type === 'checkbox' || element.type === 'radio') {
-          element.checked = false;
-        } else if (!element.readOnly) {
-          element.value = '';
-        }
-      }
-    );
+  newLotNameDraft = '';
+
+  if (elements.lotName) {
+    elements.lotName.readOnly = false;
   }
 
-  resetLotVariants();
+  elements.form?.querySelectorAll('input, textarea, select').forEach(input => {
+    if (!input.readOnly) input.value = '';
+  });
+
+  if (elements.existingLot) {
+    elements.existingLot.value = '';
+  }
+
   resetLotCost();
-
+  resetLotVariants();
   isSubmitting = false;
+  updateLotMode();
 }
-
-
-// ========================================
-// BIND EVENTS
-// ========================================
 
 function bindEvents() {
   const elements = getElements();
 
-  elements.openButton?.addEventListener('click', () => {
-    openLotCreate();
-  });
-
-  elements.cancelButton?.addEventListener('click', () => {
-    closeLotCreate();
-  });
-
-  elements.form?.addEventListener('submit', event => {
-    event.preventDefault();
-
-    createProductLot();
-  });
-
-  elements.submitButton?.addEventListener('click', () => {
-    createProductLot();
-  });
-
+  elements.openButton?.addEventListener('click', () => openLotCreate());
+  elements.cancelButton?.addEventListener('click', closeLotCreate);
+  elements.submitButton?.addEventListener('click', createProductLot);
+  elements.existingLot?.addEventListener('change', updateLotMode);
   elements.modal?.addEventListener('click', event => {
-    if (event.target === elements.modal) {
-      closeLotCreate();
-    }
+    if (event.target === elements.modal) closeLotCreate();
   });
 }
 
+export function initLotCreate({
+  force = false,
+  ensureProductSaved: saveProduct = null
+} = {}) {
+  if (typeof saveProduct === 'function') {
+    ensureProductSaved = saveProduct;
+  }
 
-// ========================================
-// INITIALIZE
-// ========================================
-
-export function initLotCreate({ force = false } = {}) {
   if (initialized && !force) return;
 
   const elements = getElements();
+  if (!elements.modal || !elements.form) return;
 
-  if (!elements.modal || !elements.form) {
-    console.warn(
-      '[LOT CREATE] Modal or form element not found.'
-    );
-
-    return;
+  if (elements.form.dataset.lotCreateBound !== 'true') {
+    bindEvents();
+    elements.form.dataset.lotCreateBound = 'true';
   }
-
-  bindEvents();
 
   initialized = true;
 }

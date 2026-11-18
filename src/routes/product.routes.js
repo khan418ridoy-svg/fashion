@@ -40,7 +40,8 @@ router.get(
       success: true,
       generation: meta.generation,
       version: meta.version,
-      updatedAt: meta.updatedAt || null
+      updatedAt: meta.updatedAt || null,
+      changes: Array.isArray(meta.changes) ? meta.changes : []
     });
   })
 );
@@ -146,6 +147,45 @@ router.post(
       success: true,
       message: 'Product created successfully.',
       product
+    });
+  })
+);
+
+router.post(
+  '/activate',
+  asyncHandler(async (req, res) => {
+    const result = await productService.activateProducts(
+      req.body?.productIds
+    );
+
+    res.json({
+      success: true,
+      message: `${result.activatedCount} Product(s) activated.`,
+      ...result
+    });
+  })
+);
+
+router.get(
+  '/:productId/costs',
+  asyncHandler(async (req, res) => {
+    res.json({
+      success: true,
+      data: await productService.getProductCosts(req.params.productId)
+    });
+  })
+);
+
+router.put(
+  '/:productId/costs',
+  asyncHandler(async (req, res) => {
+    res.json({
+      success: true,
+      message: 'Product purchase cost saved.',
+      data: await productService.updateProductCosts(
+        req.params.productId,
+        req.body || {}
+      )
     });
   })
 );

@@ -24,8 +24,19 @@ import {
 
 const APP_CONFIG = {
   stylesheet: '/assets/css/admin.css',
-  defaultPage: 'dashboard'
+  defaultPage: 'dashboard',
+
+
+cloudinary: {
+    cloudName: 'mqn4vzh2',
+    uploadPreset: 'product',
+    folder: 'product' 
+  }
 };
+
+window.APP_CONFIG = APP_CONFIG;
+
+
 
 const PAGE_TITLES = {
   dashboard: 'Dashboard',

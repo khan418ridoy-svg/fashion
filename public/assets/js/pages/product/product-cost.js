@@ -8,7 +8,8 @@
 
 import {
   getProductElement,
-  showProductMessage
+  showProductMessage,
+  productApiRequest
 } from './product-utils.js';
 
 let initialized = false;
@@ -107,26 +108,9 @@ export async function loadProductCost(productId) {
   if (!productId) return false;
 
   try {
-    const response = await fetch(
-      `/api/products/${encodeURIComponent(productId)}/costs`,
-      {
-        method: 'GET',
-        credentials: 'same-origin',
-        headers: {
-          Accept: 'application/json'
-        }
-      }
+    const result = await productApiRequest(
+      `/api/products/${encodeURIComponent(productId)}/costs`
     );
-
-    if (!response.ok) {
-      throw new Error(`Cost load failed: ${response.status}`);
-    }
-
-    const result = await response.json();
-
-    if (result.success === false) {
-      throw new Error(result.message || 'Cost load failed');
-    }
 
     setProductCostData(result.data || {});
 
@@ -164,26 +148,13 @@ export async function saveProductCost(productId) {
   if (!validateProductCost()) return false;
 
   try {
-    const response = await fetch(
+    await productApiRequest(
       `/api/products/${encodeURIComponent(productId)}/costs`,
       {
         method: 'PUT',
-        credentials: 'same-origin',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json'
-        },
         body: JSON.stringify(getProductCostData())
       }
     );
-
-    const result = await response.json();
-
-    if (!response.ok || result.success === false) {
-      throw new Error(
-        result.message || 'Product Cost save failed'
-      );
-    }
 
     currentProductId = productId;
 

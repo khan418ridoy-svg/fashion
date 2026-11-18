@@ -48,7 +48,8 @@ const firebaseConnectSources = [
   'https://securetoken.googleapis.com',
   'https://firebaseinstallations.googleapis.com',
   'https://www.googleapis.com',
-  'https://www.gstatic.com'
+  'https://www.gstatic.com',
+  'https://api.cloudinary.com'
 ];
 
 // ========================================
@@ -181,12 +182,114 @@ if (process.env.NODE_ENV !== 'production') {
 // Health Check
 // ========================================
 
-app.get('/health', (req, res) => {
-  res.status(200).json({
+// ========================================
+// Detailed Health Check
+// ========================================
+
+const { db } = require('./src/config/firebase');
+const geminiService = require('./src/services/ai/gemini.service');
+
+async function checkFirestore() {
+  let timeout;
+
+  try {
+    const firestoreCheck = db
+      .collection('_system')
+      .doc('_health_check')
+      .get();
+
+    await Promise.race([
+      firestoreCheck,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error('Firestore connection timeout'));
+        }, 5000);
+
+        if (typeof timeout.unref === 'function') {
+          timeout.unref();
+        }
+      })
+    ]);
+
+    return {
+      status: 'connected',
+      success: true
+    };
+
+  } catch (error) {
+    console.error('[HEALTH: FIRESTORE]', error.message);
+
+    return {
+      status: 'disconnected',
+      success: false
+    };
+
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function checkGeminiConfiguration() {
+  try {
+    const keys = geminiService.getApiKeys();
+    const models = geminiService.getModels();
+
+    const configured = keys.length > 0 && models.length > 0;
+
+    return {
+      status: configured ? 'configured' : 'not_configured',
+      success: configured,
+      keyCount: keys.length,
+      modelCount: models.length
+    };
+
+  } catch (error) {
+    return {
+      status: 'configuration_error',
+      success: false,
+      keyCount: 0,
+      modelCount: 0
+    };
+  }
+}
+
+app.get('/health', async (req, res) => {
+  const startedAt = Date.now();
+
+  const [firestore, gemini] = await Promise.all([
+    checkFirestore(),
+    Promise.resolve(checkGeminiConfiguration())
+  ]);
+
+  const checks = {
+    server: {
+      status: 'running',
+      success: true
+    },
+
+    firestore,
+
+    gemini
+  };
+
+  const ready =
+    firestore.success &&
+    gemini.success;
+
+  return res.status(200).json({
     success: true,
+
     service: 'Nishat Fashion Category Admin',
-    status: 'running',
-    timestamp: Date.now()
+
+    status: ready ? 'healthy' : 'degraded',
+
+    ready,
+
+    checks,
+
+    responseTime: Date.now() - startedAt,
+
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -197,13 +300,23 @@ const authRoutes = require('./src/routes/auth.routes');
 const taxonomyRoutes = require('./src/routes/taxonomy.routes');
 const productRoutes = require('./src/routes/product.routes');
 const productLotRoutes = require('./src/routes/product-lot.routes');
+const purchaseLotRoutes = require('./src/routes/purchase-lot.routes');
+const stockAllocationRoutes = require('./src/routes/stock-allocation.routes');
+const settingsRoutes = require('./src/routes/settings.routes');
+const couponRoutes = require('./src/routes/coupon.routes');
 const aiRoutes = require('./src/routes/ai.routes');
+const cloudinaryRoutes = require('./src/routes/cloudinary.routes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/taxonomy', taxonomyRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/products', productLotRoutes);
+app.use('/api/lots', purchaseLotRoutes);
+app.use('/api/stock-allocations', stockAllocationRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/coupons', couponRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/cloudinary', cloudinaryRoutes);
 
 // ========================================
 // API Not Found
@@ -302,13 +415,17 @@ app.use((err, req, res, next) => {
     });
   }
 
-  return res.status(err.status || 500).json({
+  const status = err.status || err.statusCode || 500;
+
+  return res.status(status).json({
     success: false,
 
     message:
       process.env.NODE_ENV === 'production'
         ? 'Internal server error.'
-        : err.message
+        : err.message,
+
+    ...(err.code ? { code: err.code } : {})
   });
 });
 

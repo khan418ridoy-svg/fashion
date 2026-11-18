@@ -3,6 +3,149 @@
 
 const geminiService = require('../services/ai/gemini.service');
 
+const PRODUCT_TASKS = {
+  content: {
+    fields: ['shortDescription', 'description'],
+    instruction: 'Write concise, natural ecommerce product copy in English. Do not invent measurements, materials or guarantees.'
+  },
+  seo: {
+    fields: ['metaTitle', 'metaDescription', 'tags'],
+    instruction: 'Create search-friendly metadata. metaTitle and metaDescription must be English only with no Bangla text. Keep metaTitle within 60 characters and metaDescription within 160 characters. tags must be an array of short strings.'
+  },
+  attributes: {
+    fields: ['fabricType', 'fit', 'sleeveType', 'washCare', 'tags'],
+    instruction: 'Suggest only common apparel attribute values that can be safely inferred. Prefer values such as Cotton, Linen, Regular Fit, Slim Fit, Full Sleeve and Short Sleeve.'
+  },
+  category: {
+    fields: ['collection', 'category', 'subcategory'],
+    instruction: 'Suggest the closest collection, category and subcategory names from the product facts. Return an empty string when the information is insufficient.'
+  }
+};
+
+function extractJSONObject(text) {
+  const value = String(text || '').trim();
+
+  if (!value) {
+    throw new Error('AI returned an empty response.');
+  }
+
+  const withoutFence = value
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  try {
+    return JSON.parse(withoutFence);
+  } catch {
+    const start = withoutFence.indexOf('{');
+    const end = withoutFence.lastIndexOf('}');
+
+    if (start === -1 || end <= start) {
+      throw new Error('AI returned invalid JSON.');
+    }
+
+    return JSON.parse(withoutFence.slice(start, end + 1));
+  }
+}
+
+function sanitizeProductAIResult(task, value) {
+  const config = PRODUCT_TASKS[task];
+  const result = {};
+
+  for (const field of config.fields) {
+    const item = value?.[field];
+
+    if (field === 'tags') {
+      const tags = Array.isArray(item)
+        ? item
+        : String(item || '').split(',');
+
+      result.tags = [...new Set(
+        tags
+          .map(tag => String(tag).trim())
+          .filter(Boolean)
+          .slice(0, 12)
+      )];
+      continue;
+    }
+
+    if (
+      task === 'seo' &&
+      (field === 'metaTitle' || field === 'metaDescription')
+    ) {
+      const lines = String(item || '')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
+      const englishLine = lines.find(line => (
+        /[a-z]/i.test(line) &&
+        !/[\u0980-\u09ff]/u.test(line)
+      ));
+      const limit = field === 'metaTitle' ? 60 : 160;
+
+      result[field] = String(englishLine || lines.join(' '))
+        .replace(/[\u0980-\u09ff]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, limit);
+      continue;
+    }
+
+    result[field] = String(item || '').trim();
+  }
+
+  return result;
+}
+
+async function generateProductTask(req, res, next, task) {
+  try {
+    const config = PRODUCT_TASKS[task];
+    const product = req.body?.product;
+
+    if (!product || typeof product !== 'object' || Array.isArray(product)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Product facts are required.'
+      });
+    }
+
+    const name = String(product.name || '').trim();
+
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Product name is required before using AI.'
+      });
+    }
+
+    const result = await geminiService.generateText({
+      systemInstruction: [
+        'You are an ecommerce product assistant for a Bangladeshi fashion store.',
+        config.instruction,
+        'Return only one valid JSON object. Do not use markdown.',
+        `The JSON may contain only these keys: ${config.fields.join(', ')}.`
+      ].join(' '),
+      prompt: `Create the requested product suggestion from these facts:\n${JSON.stringify(product)}`,
+      temperature: 0.35,
+      maxOutputTokens: 1200
+    });
+
+    const data = sanitizeProductAIResult(
+      task,
+      extractJSONObject(result.text)
+    );
+
+    return res.json({
+      success: true,
+      data,
+      model: result.model,
+      usage: result.usage || null
+    });
+  } catch (error) {
+    return next(error);
+  }
+}
+
 // ========================================
 // POST: Generate AI Response
 // ========================================
@@ -123,6 +266,22 @@ function usage(req, res) {
   });
 }
 
+function productContent(req, res, next) {
+  return generateProductTask(req, res, next, 'content');
+}
+
+function productSEO(req, res, next) {
+  return generateProductTask(req, res, next, 'seo');
+}
+
+function productAttributes(req, res, next) {
+  return generateProductTask(req, res, next, 'attributes');
+}
+
+function productCategory(req, res, next) {
+  return generateProductTask(req, res, next, 'category');
+}
+
 // ========================================
 // Export
 // ========================================
@@ -130,5 +289,9 @@ function usage(req, res) {
 module.exports = {
   generate,
   health,
-  usage
+  usage,
+  productContent,
+  productSEO,
+  productAttributes,
+  productCategory
 };

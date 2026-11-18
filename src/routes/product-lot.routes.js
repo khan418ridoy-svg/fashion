@@ -92,6 +92,18 @@ router.get(
   })
 );
 
+router.get(
+  '/:productId/lots/:lotId/history',
+  asyncHandler(async (req, res) => {
+    const history = await productLotService.getProductLotHistory(
+      req.params.productId,
+      req.params.lotId
+    );
+
+    res.json({ success: true, history });
+  })
+);
+
 // ========================================
 // GET: Single Product Lot
 // ========================================

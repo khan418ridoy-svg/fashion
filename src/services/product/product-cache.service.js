@@ -7,7 +7,6 @@
 
 const META_COLLECTION = 'meta';
 const CATALOG_META_DOCUMENT = 'productCatalog';
-const CHANGES_COLLECTION = 'productChanges';
 
 const DEFAULT_GENERATION = 'initial';
 const DEFAULT_CHANGE_LIMIT = 100;
@@ -108,8 +107,67 @@ function getMetaRef(db) {
     .doc(CATALOG_META_DOCUMENT);
 }
 
-function getChangesCollection(db) {
-  return db.collection(CHANGES_COLLECTION);
+function dedupeChangesByProductId(changes = []) {
+  const latestChanges = new Map();
+
+  [...changes]
+    .sort((left, right) => left.version - right.version)
+    .forEach(change => {
+      const key = `${change.generation}:${change.productId}`;
+      const previous = latestChanges.get(key);
+      const action = previous?.action === 'created' &&
+        change.action === 'updated'
+        ? 'created'
+        : change.action;
+
+      latestChanges.set(key, {
+        ...change,
+        action
+      });
+    });
+
+  return [...latestChanges.values()]
+    .sort((left, right) => left.version - right.version)
+    .slice(-MAX_CHANGE_LIMIT);
+}
+
+function normalizeChanges(value, fallbackGeneration = DEFAULT_GENERATION) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalizedChanges = value
+    .map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        return null;
+      }
+
+      const version = Number(item.version);
+      const productId = cleanString(item.productId, 200);
+      const action = cleanString(item.action, 30);
+
+      if (
+        !Number.isSafeInteger(version) ||
+        version < 1 ||
+        !productId ||
+        !ALLOWED_ACTIONS.has(action)
+      ) {
+        return null;
+      }
+
+      return {
+        generation:
+          cleanString(item.generation, 100) ||
+          fallbackGeneration,
+        version,
+        productId,
+        action,
+        updatedAt: item.updatedAt || null
+      };
+    })
+    .filter(Boolean);
+
+  return dedupeChangesByProductId(normalizedChanges);
 }
 
 // --------------------------------------------------
@@ -125,20 +183,24 @@ async function getCatalogMeta(db) {
     return {
       generation: DEFAULT_GENERATION,
       version: 0,
+      changes: [],
       exists: false
     };
   }
 
   const data = snapshot.data() || {};
+  const generation =
+    cleanString(data.generation, 100) ||
+    DEFAULT_GENERATION;
 
   return {
-    generation:
-      cleanString(data.generation, 100) ||
-      DEFAULT_GENERATION,
+    generation,
 
     version: validateVersion(data.version),
 
     updatedAt: data.updatedAt || null,
+
+    changes: normalizeChanges(data.changes, generation),
 
     exists: true
   };
@@ -172,6 +234,7 @@ async function checkCatalogVersion(db, clientState = {}) {
   return {
     generation: serverState.generation,
     version: serverState.version,
+    changes: serverState.changes,
 
     unchanged:
       generationMatches && versionMatches,
@@ -239,7 +302,11 @@ async function prepareProductChange(options = {}) {
     throw new Error('Catalog version limit exceeded.');
   }
 
-  const changeRef = getChangesCollection(db).doc();
+  const existingChanges = normalizeChanges(
+    data.changes,
+    generation
+  );
+  const changeId = `${generation}:${nextVersion}`;
 
   let written = false;
 
@@ -248,7 +315,7 @@ async function prepareProductChange(options = {}) {
     version: nextVersion,
     productId: safeProductId,
     action: safeAction,
-    changeId: changeRef.id,
+    changeId,
 
     /**
      * WRITE PHASE ONLY.
@@ -268,33 +335,159 @@ async function prepareProductChange(options = {}) {
       }
 
       const now = new Date();
+      const changes = normalizeChanges([
+        ...existingChanges,
+        {
+          generation,
+          version: nextVersion,
+          productId: safeProductId,
+          action: safeAction,
+          updatedAt: now
+        }
+      ], generation);
 
-      // Update catalog metadata.
+      // Catalog version and recent changes live in one document/read.
       writeTransaction.set(
         metaRef,
         {
           generation,
           version: nextVersion,
+          changes,
           updatedAt: now
         },
         { merge: true }
       );
-
-      // Save change log.
-      writeTransaction.set(changeRef, {
-        generation,
-        version: nextVersion,
-        productId: safeProductId,
-        action: safeAction,
-        updatedAt: now
-      });
 
       written = true;
 
       return {
         generation,
         version: nextVersion,
-        changeId: changeRef.id
+        changeId
+      };
+    }
+  };
+}
+
+async function prepareProductChanges(options = {}) {
+  const {
+    db,
+    transaction,
+    changes
+  } = options;
+
+  validateDb(db);
+
+  if (!transaction || typeof transaction.get !== 'function') {
+    throw new Error('Firestore transaction is required.');
+  }
+
+  if (!Array.isArray(changes) || changes.length === 0) {
+    throw new Error('At least one Product change is required.');
+  }
+
+  if (changes.length > MAX_CHANGE_LIMIT) {
+    throw new Error(
+      `Product changes cannot exceed ${MAX_CHANGE_LIMIT}.`
+    );
+  }
+
+  const uniqueChanges = new Map();
+
+  changes.forEach(change => {
+    const normalizedChange = {
+      productId: validateProductId(change?.productId),
+      action: validateAction(change?.action)
+    };
+    const previous = uniqueChanges.get(normalizedChange.productId);
+
+    uniqueChanges.set(normalizedChange.productId, {
+      ...normalizedChange,
+      action: previous?.action === 'created' &&
+        normalizedChange.action === 'updated'
+        ? 'created'
+        : normalizedChange.action
+    });
+  });
+
+  const normalizedChanges = [...uniqueChanges.values()];
+  const metaRef = getMetaRef(db);
+  const snapshot = await transaction.get(metaRef);
+  const data = snapshot.exists
+    ? snapshot.data() || {}
+    : {};
+  const generation =
+    cleanString(data.generation, 100) ||
+    DEFAULT_GENERATION;
+  const currentVersion = validateVersion(data.version, 0);
+  const nextVersion = currentVersion + normalizedChanges.length;
+
+  if (!Number.isSafeInteger(nextVersion)) {
+    throw new Error('Catalog version limit exceeded.');
+  }
+
+  const existingChanges = normalizeChanges(
+    data.changes,
+    generation
+  );
+  const plannedChanges = normalizedChanges.map((change, index) => ({
+    generation,
+    version: currentVersion + index + 1,
+    productId: change.productId,
+    action: change.action,
+    changeId: `${generation}:${currentVersion + index + 1}`
+  }));
+
+  let written = false;
+
+  return {
+    generation,
+    version: nextVersion,
+    changes: plannedChanges.map(change => ({ ...change })),
+
+    write(writeTransaction) {
+      if (written) {
+        throw new Error(
+          'Product changes plan has already been written.'
+        );
+      }
+
+      if (
+        !writeTransaction ||
+        typeof writeTransaction.set !== 'function'
+      ) {
+        throw new Error('Firestore transaction is required.');
+      }
+
+      const now = new Date();
+      const nextChanges = normalizeChanges([
+        ...existingChanges,
+        ...plannedChanges.map(change => ({
+          generation: change.generation,
+          version: change.version,
+          productId: change.productId,
+          action: change.action,
+          updatedAt: now
+        }))
+      ], generation);
+
+      writeTransaction.set(
+        metaRef,
+        {
+          generation,
+          version: nextVersion,
+          changes: nextChanges,
+          updatedAt: now
+        },
+        { merge: true }
+      );
+
+      written = true;
+
+      return {
+        generation,
+        version: nextVersion,
+        changes: plannedChanges.map(change => ({ ...change }))
       };
     }
   };
@@ -318,30 +511,17 @@ async function getProductChanges(db, options = {}) {
 
   const limit = validateLimit(options.limit);
 
-  const query = getChangesCollection(db)
-    .where('generation', '==', generation)
-    .where('version', '>', afterVersion)
-    .orderBy('version', 'asc')
-    .limit(limit + 1);
-
-  const snapshot = await query.get();
-
-  const hasMore = snapshot.docs.length > limit;
-
-  const docs = snapshot.docs.slice(0, limit);
-
-  const changes = docs.map((doc) => {
-    const data = doc.data() || {};
-
-    return {
-      changeId: doc.id,
-      generation: data.generation,
-      version: validateVersion(data.version),
-      productId: data.productId || null,
-      action: data.action || null,
-      updatedAt: data.updatedAt || null
-    };
-  });
+  const meta = await getCatalogMeta(db);
+  const matchingChanges = meta.generation === generation
+    ? meta.changes
+        .filter(change => change.version > afterVersion)
+        .sort((left, right) => left.version - right.version)
+    : [];
+  const hasMore = matchingChanges.length > limit;
+  const changes = matchingChanges.slice(0, limit).map(change => ({
+    ...change,
+    changeId: `${change.generation}:${change.version}`
+  }));
 
   return {
     generation,
@@ -371,7 +551,6 @@ async function getProductChanges(db, options = {}) {
  * - products
  * - productLots
  * - productSkuIndex
- * - productChanges
  * - meta/taxonomy
  */
 
@@ -418,6 +597,7 @@ async function resetCatalogGeneration(options = {}) {
       {
         generation: nextGeneration,
         version: 1,
+        changes: [],
         updatedAt: new Date()
       },
       { merge: true }
@@ -441,6 +621,7 @@ async function getFullCatalogSyncState(db) {
   return {
     generation: meta.generation,
     version: meta.version,
+    changes: meta.changes,
     fullSyncRequired: true
   };
 }
@@ -452,12 +633,12 @@ async function getFullCatalogSyncState(db) {
 module.exports = {
   META_COLLECTION,
   CATALOG_META_DOCUMENT,
-  CHANGES_COLLECTION,
 
   getCatalogMeta,
   checkCatalogVersion,
 
   prepareProductChange,
+  prepareProductChanges,
 
   getProductChanges,
 

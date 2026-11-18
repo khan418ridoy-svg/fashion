@@ -59,7 +59,8 @@ import {
   initProductCost,
   getProductCostData,
   setProductCostData,
-  validateProductCost
+  validateProductCost,
+  loadProductCost
 } from './product-cost.js';
 
 import {
@@ -108,7 +109,9 @@ import {
 
 import {
   getProductElement,
-  showProductMessage
+  showProductMessage,
+  productApiRequest,
+  setProductButtonLoading
 } from './product-utils.js';
 
 // ========================================
@@ -119,6 +122,7 @@ let initialized = false;
 let currentProductId = null;
 let activeContainer = null;
 let basicEventsCleanup = null;
+let isSaving = false;
 
 // ========================================
 // HTML HELPERS
@@ -203,6 +207,20 @@ function selectField(id, label, placeholder) {
   `;
 }
 
+function choiceField(id, label, options, placeholder = 'Select an option') {
+  return `
+    <div class="form-group">
+      <label for="${id}">${label}</label>
+      <select class="form-control" id="${id}" name="${id}">
+        <option value="">${escapeHTML(placeholder)}</option>
+        ${options.map(option => `
+          <option value="${escapeHTML(option)}">${escapeHTML(option)}</option>
+        `).join('')}
+      </select>
+    </div>
+  `;
+}
+
 function checkboxField(id, label) {
   return `
     <label class="form-checkbox" for="${id}">
@@ -259,7 +277,7 @@ function renderProductFormMarkup() {
 
             <button type="button" class="btn btn-secondary"
               id="add-product-taxonomy">
-              + Add Taxonomy
+              + Add category
             </button>
           `,
           'product-category-section'
@@ -370,12 +388,21 @@ function renderProductFormMarkup() {
 
             <div id="product-image-container"></div>
 
-            <button
-              type="button"
-              class="btn btn-secondary"
-              id="product-image-upload">
-              Upload Images
-            </button>
+            <div class="product-image-actions">
+              <button
+                type="button"
+                class="btn btn-secondary"
+                id="product-image-upload">
+                Upload Images
+              </button>
+
+              <button
+                type="button"
+                class="btn btn-primary"
+                id="product-image-cloudinary">
+                Choose from Cloudinary
+              </button>
+            </div>
 
             <small class="form-help">
               JPG, PNG or WebP. Maximum 5 MB per image.
@@ -383,6 +410,41 @@ function renderProductFormMarkup() {
           `,
           'product-images-section'
         )}
+
+        <div class="product-modal-overlay"
+          id="cloudinary-image-modal" hidden>
+          <div class="product-modal cloudinary-library-modal"
+            role="dialog" aria-modal="true"
+            aria-labelledby="cloudinary-image-title">
+
+            <div class="product-modal-header cloudinary-library-header">
+              <div>
+                <h3 id="cloudinary-image-title">Cloudinary Images</h3>
+                <p>Select existing images from your Cloudinary library.</p>
+              </div>
+
+              <button type="button" class="cloudinary-library-close"
+                id="cloudinary-image-close"
+                aria-label="Close Cloudinary images">×</button>
+            </div>
+
+            <div class="cloudinary-library-body">
+              <p class="cloudinary-library-status"
+                id="cloudinary-image-status">Loading images...</p>
+
+              <div class="cloudinary-library-grid"
+                id="cloudinary-image-grid"></div>
+            </div>
+
+            <div class="cloudinary-library-actions">
+              <button type="button" class="btn btn-secondary"
+                id="cloudinary-image-cancel">Cancel</button>
+
+              <button type="button" class="btn btn-primary"
+                id="cloudinary-image-add" disabled>Add Selected</button>
+            </div>
+          </div>
+        </div>
 
         <!-- DESCRIPTION -->
         ${section(
@@ -409,29 +471,26 @@ function renderProductFormMarkup() {
             <small id="product-description-counter">0 / 10000</small>
 
             <div class="product-form-grid">
-              ${field({
-                id: 'product-fabric-type',
-                label: 'Fabric Type',
-                placeholder: 'Cotton, Linen, etc.'
-              })}
+              ${choiceField('product-fabric-type', 'Fabric Type', [
+                'Cotton', 'Linen', 'Denim', 'Silk', 'Polyester',
+                'Viscose/Rayon', 'Wool', 'Knit', 'Georgette',
+                'Chiffon', 'Mixed Fabric'
+              ])}
 
-              ${field({
-                id: 'product-fit',
-                label: 'Fit',
-                placeholder: 'Regular, Slim, Loose'
-              })}
+              ${choiceField('product-fit', 'Fit', [
+                'Regular Fit', 'Slim Fit', 'Relaxed Fit',
+                'Oversized Fit', 'Tailored Fit'
+              ])}
 
-              ${field({
-                id: 'product-sleeve-type',
-                label: 'Sleeve Type',
-                placeholder: 'Full sleeve, Short sleeve'
-              })}
+              ${choiceField('product-sleeve-type', 'Sleeve Type', [
+                'Sleeveless', 'Short Sleeve', 'Half Sleeve',
+                'Three Quarter Sleeve', 'Full Sleeve'
+              ])}
 
-              ${field({
-                id: 'product-wash-care',
-                label: 'Wash Care',
-                placeholder: 'Wash instructions'
-              })}
+              ${choiceField('product-wash-care', 'Wash Care', [
+                'Machine Wash', 'Hand Wash', 'Gentle Cycle',
+                'Cold Wash', 'Dry Clean Only'
+              ])}
             </div>
 
             ${field({
@@ -441,6 +500,30 @@ function renderProductFormMarkup() {
             })}
           `,
           'product-description-section'
+        )}
+
+        <!-- AI -->
+        ${section(
+          'AI Product Assistant',
+          'Fill only product content, attributes, SEO and category suggestions.',
+          `
+            <div class="product-ai-actions">
+              <button type="button" class="btn btn-secondary"
+                id="product-ai-generate-all">
+                Generate Product Info with AI
+              </button>
+            </div>
+
+            <div id="product-ai-preview" hidden>
+              <div id="product-ai-preview-content"></div>
+
+              <button type="button" class="btn btn-primary"
+                id="product-ai-accept">Apply Suggestion</button>
+              <button type="button" class="btn btn-secondary"
+                id="product-ai-reject">Reject</button>
+            </div>
+          `,
+          'product-ai-section'
         )}
 
         <!-- SEO -->
@@ -487,12 +570,12 @@ function renderProductFormMarkup() {
               <div class="product-form-grid">
                 ${field({
                   id: 'product-buy-price',
-                  label: 'Default Buy Price',
+                  label: 'Purchase Cost',
                   type: 'number',
                   placeholder: '0.00',
                   min: '0',
                   step: '0.01',
-                  help: 'Used only for variants that do not have their own Buy Price.'
+                  help: 'Product buy price. A variant may override this cost.'
                 })}
 
                 ${field({
@@ -538,35 +621,6 @@ function renderProductFormMarkup() {
           'product-flags-section'
         )}
 
-        <!-- AI -->
-        ${section(
-          'AI Product Assistant',
-          'Generate content, SEO, attributes and category suggestions together.',
-          `
-            <div class="product-ai-actions">
-              <button type="button" class="btn btn-secondary"
-                id="product-ai-generate-all">
-                Generate Everything with AI
-              </button>
-            </div>
-
-            <div id="product-ai-preview" hidden>
-              <div id="product-ai-preview-content"></div>
-
-              <button type="button" class="btn btn-primary"
-                id="product-ai-accept">
-                Apply Suggestion
-              </button>
-
-              <button type="button" class="btn btn-secondary"
-                id="product-ai-reject">
-                Reject
-              </button>
-            </div>
-          `,
-          'product-ai-section'
-        )}
-
         <!-- REVIEW -->
         ${section(
           'Product Reviews',
@@ -606,7 +660,7 @@ function renderProductFormMarkup() {
                 type="button"
                 class="btn btn-primary"
                 id="product-lot-create">
-                + Create New Lot
+                + Create / Add Lot
               </button>
             </div>
 
@@ -621,53 +675,45 @@ function renderProductFormMarkup() {
             aria-modal="true" aria-labelledby="lot-create-title">
 
             <div class="product-modal-header">
-              <h3 id="lot-create-title">Create Purchase Lot</h3>
+              <h3 id="lot-create-title">Create or Add to Purchase Lot</h3>
             </div>
 
             <div id="lot-create-form">
-              ${field({
-                id: 'lot-number',
-                label: 'Lot Number',
-                placeholder: 'Auto generated',
-                readonly: true
-              })}
+              <div class="form-group">
+                <label for="lot-existing-lot">
+                  Existing Purchase Lot (Optional)
+                </label>
+
+                <select class="form-control" id="lot-existing-lot">
+                  <option value="">Create a new Lot</option>
+                </select>
+
+                <small class="form-help">
+                  পুরোনো Lot নির্বাচন করলে এই Product-এর stock সেই Lot-এ যোগ হবে।
+                </small>
+              </div>
 
               ${field({
-                id: 'lot-purchase-date',
-                label: 'Purchase Date',
-                type: 'date',
+                id: 'lot-name',
+                label: 'Lot Name',
+                placeholder: 'Example: Eid Collection - 01',
                 required: true
               })}
 
-              ${field({
-                id: 'lot-supplier',
-                label: 'Supplier',
-                placeholder: 'Supplier name'
-              })}
-
-              ${textarea({
-                id: 'lot-purchase-note',
-                label: 'Purchase Note',
-                placeholder: 'Lot notes',
-                rows: 3
-              })}
-
               <div class="lot-variants-section">
-                <h4>Lot Variants</h4>
+                <h4>Add Stock Quantity</h4>
+                <p class="lot-stock-help">
+                  Current stock and average buy rate are read-only. Enter the new stock buy rate and quantity.
+                </p>
 
                 <div id="lot-variants-container"></div>
 
-                <button type="button" class="btn btn-secondary"
-                  id="lot-add-variant">
-                  + Add Lot Variant
-                </button>
-
-                <div class="lot-total">
-                  Total Quantity:
-                  <strong id="lot-total-quantity">0</strong>
-                </div>
-
-                <template id="lot-variant-template"></template>
+                ${field({
+                  id: 'lot-total-quantity',
+                  label: 'Total Lot Quantity',
+                  type: 'number',
+                  readonly: true
+                })}
               </div>
 
               <div class="lot-cost-section">
@@ -678,20 +724,14 @@ function renderProductFormMarkup() {
                   label: 'Purchase Cost',
                   type: 'number',
                   min: '0',
-                  step: '0.01'
+                  step: '0.01',
+                  readonly: true,
+                  help: 'Product/Variant buy price × purchase quantity.'
                 })}
 
                 ${field({
                   id: 'lot-transport-cost',
                   label: 'Transport Cost',
-                  type: 'number',
-                  min: '0',
-                  step: '0.01'
-                })}
-
-                ${field({
-                  id: 'lot-packaging-cost',
-                  label: 'Packaging Cost',
                   type: 'number',
                   min: '0',
                   step: '0.01'
@@ -705,12 +745,6 @@ function renderProductFormMarkup() {
                   step: '0.01'
                 })}
 
-                ${textarea({
-                  id: 'lot-other-cost-note',
-                  label: 'Other Cost Note',
-                  rows: 2
-                })}
-
                 ${field({
                   id: 'lot-total-cost',
                   label: 'Total Lot Cost',
@@ -718,19 +752,6 @@ function renderProductFormMarkup() {
                   readonly: true
                 })}
 
-                ${field({
-                  id: 'lot-cost-total-quantity',
-                  label: 'Total Lot Quantity',
-                  type: 'number',
-                  readonly: true
-                })}
-
-                ${field({
-                  id: 'lot-unit-cost',
-                  label: 'Unit Cost',
-                  type: 'number',
-                  readonly: true
-                })}
               </div>
 
               <div class="product-modal-actions">
@@ -743,6 +764,70 @@ function renderProductFormMarkup() {
                   id="lot-create-submit">
                   Create Lot
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- LOT EDIT MODAL -->
+        <div class="product-modal-overlay" id="lot-edit-modal" hidden
+          aria-hidden="true">
+          <div class="product-modal product-lot-edit-modal" role="dialog"
+            aria-modal="true" aria-labelledby="lot-edit-title">
+
+            <div class="product-modal-header">
+              <h3 id="lot-edit-title">Edit Purchase Lot</h3>
+              <p>Lot name and additional costs can be updated here.</p>
+            </div>
+
+            <div id="lot-edit-form">
+              ${field({
+                id: 'lot-edit-name',
+                label: 'Lot Name',
+                placeholder: 'Lot name',
+                required: true
+              })}
+
+              ${field({
+                id: 'lot-edit-purchase-cost',
+                label: 'Purchase Cost',
+                type: 'number',
+                min: '0',
+                step: '0.01',
+                readonly: true,
+                help: 'Calculated from Product/Variant buy price.'
+              })}
+
+              ${field({
+                id: 'lot-edit-transport-cost',
+                label: 'Transport Cost',
+                type: 'number',
+                min: '0',
+                step: '0.01'
+              })}
+
+              ${field({
+                id: 'lot-edit-other-cost',
+                label: 'Other Cost',
+                type: 'number',
+                min: '0',
+                step: '0.01'
+              })}
+
+              ${textarea({
+                id: 'lot-edit-note',
+                label: 'Note',
+                placeholder: 'Optional lot note',
+                rows: 3,
+                maxlength: 1000
+              })}
+
+              <div class="product-modal-actions">
+                <button type="button" class="btn btn-secondary"
+                  id="lot-edit-cancel">Cancel</button>
+
+                <button type="button" class="btn btn-primary"
+                  id="lot-edit-submit">Save Lot Changes</button>
               </div>
             </div>
           </div>
@@ -789,7 +874,7 @@ function renderProductFormMarkup() {
 
           <button type="submit" class="btn btn-primary"
             id="product-form-submit">
-            Validate Product
+            Create Product
           </button>
         </div>
 
@@ -897,6 +982,9 @@ export async function initProductForm({
 
   if (submitButton) {
     submitButton.type = 'submit';
+    submitButton.textContent = currentProductId
+      ? 'Save Changes'
+      : 'Create Product';
   }
 
   initProductPricing({ force: true });
@@ -914,12 +1002,21 @@ export async function initProductForm({
   initLotVariants({ force: true });
   initLotCost({ force: true });
   initLotHistory({ force: true });
-  initLotCreate({ force: true });
+  initLotCreate({
+    force: true,
+    ensureProductSaved: () => saveProductForm({
+      showSuccess: false
+    })
+  });
   setLotCreateProductId(currentProductId);
 
   await initProductCategory({ force: true });
 
   hydrateProductModules(product || {});
+
+  if (currentProductId) {
+    await loadProductCost(currentProductId);
+  }
 
   basicEventsCleanup?.();
   basicEventsCleanup = bindProductBasicEvents(container, {
@@ -985,23 +1082,131 @@ export function validateProductForm() {
 // SUBMIT
 // ========================================
 
-function handleFormSubmit(event) {
+async function handleFormSubmit(event) {
   event.preventDefault();
+
+  await saveProductForm();
+}
+
+export async function saveProductForm({
+  showSuccess = true,
+  redirectToIndex = showSuccess
+} = {}) {
+
+  if (isSaving) return false;
 
   if (!validateProductForm()) {
     showProductMessage(
       'Product form-এর কিছু তথ্য সঠিক নয়। যাচাই করে আবার চেষ্টা করুন।',
       'warning'
     );
-    return;
+    return false;
   }
 
-  showProductMessage(
-    'Validation সফল হয়েছে। Save API এখনো backend endpoint অনুযায়ী যুক্ত করা হয়নি।',
-    'info'
+  const submitButton = activeContainer?.querySelector(
+    '#product-form-submit'
+  );
+  const isUpdate = Boolean(currentProductId);
+  const payload = getProductSavePayload();
+
+  isSaving = true;
+  setProductButtonLoading(
+    submitButton,
+    true,
+    isUpdate ? 'Saving Changes...' : 'Creating Product...'
   );
 
-  console.info('[PRODUCT FORM] Validation passed.');
+  try {
+    const result = await productApiRequest(
+      isUpdate
+        ? `/api/products/${encodeURIComponent(currentProductId)}`
+        : '/api/products',
+      {
+        method: isUpdate ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload)
+      }
+    );
+
+    const savedProduct =
+      result.product ||
+      result.data?.product ||
+      result.data;
+    const savedProductId = String(
+      savedProduct?.id ||
+      savedProduct?.productId ||
+      currentProductId ||
+      ''
+    );
+
+    if (!savedProductId) {
+      throw new Error('Saved Product ID পাওয়া যায়নি।');
+    }
+
+    currentProductId = savedProductId;
+    setLotCreateProductId(savedProductId);
+
+    const idInput = activeContainer?.querySelector('#product-id');
+    const title = activeContainer?.querySelector('#product-form-title');
+    const skuInput = activeContainer?.querySelector('#product-sku');
+    const codeInput = activeContainer?.querySelector('#product-code');
+    const slugInput = activeContainer?.querySelector('#product-slug');
+    const savedSlug = savedProduct?.slug || savedProduct?.seo?.slug;
+
+    if (idInput) idInput.value = savedProductId;
+    if (activeContainer) activeContainer.dataset.productId = savedProductId;
+    if (title) title.textContent = 'Edit Product';
+    if (skuInput && savedProduct?.sku) skuInput.value = savedProduct.sku;
+    if (codeInput && savedProduct?.productCode) {
+      codeInput.value = savedProduct.productCode;
+    }
+    if (slugInput && savedSlug) {
+      slugInput.value = savedSlug;
+      slugInput.dataset.currentSlug = savedSlug;
+    }
+
+    if (showSuccess) {
+      showProductMessage(
+        isUpdate
+          ? 'Product সফলভাবে update হয়েছে।'
+          : 'Product সফলভাবে save হয়েছে। এখন Purchase Lot তৈরি করা যাবে।',
+        'success',
+        5000
+      );
+    }
+
+    document.dispatchEvent(new CustomEvent('product:saved', {
+      detail: {
+        isUpdate,
+        redirectToIndex,
+        product: {
+          ...payload,
+          ...(savedProduct || {}),
+          id: savedProductId
+        }
+      }
+    }));
+
+    return savedProduct;
+
+  } catch (error) {
+    console.error('[PRODUCT SAVE]', error);
+    showProductMessage(
+      error.message || 'Product save করা যায়নি।',
+      'error',
+      7000
+    );
+    return false;
+
+  } finally {
+    isSaving = false;
+    setProductButtonLoading(submitButton, false);
+
+    if (submitButton) {
+      submitButton.textContent = currentProductId
+        ? 'Save Changes'
+        : 'Create Product';
+    }
+  }
 }
 
 // ========================================
@@ -1016,6 +1221,7 @@ export function resetProductForm() {
   form?.reset();
 
   currentProductId = null;
+  isSaving = false;
   setLotCreateProductId(null);
   resetProductLots();
 
@@ -1029,6 +1235,14 @@ export function resetProductForm() {
 
   if (title) {
     title.textContent = 'Create Product';
+  }
+
+  const submitButton = activeContainer.querySelector(
+    '#product-form-submit'
+  );
+
+  if (submitButton) {
+    submitButton.textContent = 'Create Product';
   }
 
   // Reset module state
@@ -1106,6 +1320,62 @@ export function getProductFormData() {
   };
 }
 
+export function getProductSavePayload() {
+  const data = getProductFormData();
+  const category = data.category || {};
+  const pricing = data.pricing || {};
+  const inventory = data.inventory || {};
+  const description = data.description || {};
+  const seo = data.seo || {};
+  const cost = data.cost || {};
+  const flags = data.flags || {};
+  const review = data.review || {};
+
+  const variants = data.variants.map(variant => {
+    const { effectiveBuyPrice, ...productVariant } = variant;
+    return productVariant;
+  });
+
+  return {
+    name: data.basic.name,
+    brand: data.basic.brand,
+    productCode: data.basic.productCode,
+    sku: data.basic.sku,
+    slug: seo.slug || data.basic.slug,
+
+    ...category,
+    subcategoryId: category.subCategoryId || '',
+
+    ...pricing,
+    variants,
+
+    totalStock: inventory.totalStock,
+    lowStockCount: inventory.lowStockCount,
+    stockStatus: inventory.stockStatus,
+    hasStock: inventory.hasStock,
+    hasVariants: variants.length > 0,
+
+    images: data.images,
+
+    ...description,
+    ...seo,
+    ...cost,
+    ...flags,
+    ...review,
+
+    category,
+    pricing,
+    inventory: {
+      ...inventory,
+      variants
+    },
+    seo,
+    cost,
+    flags,
+    review
+  };
+}
+
 // ========================================
 // CLEANUP
 // ========================================
@@ -1131,6 +1401,7 @@ export function cleanupProductForm() {
 
   activeContainer = null;
   currentProductId = null;
+  isSaving = false;
   initialized = false;
 }
 

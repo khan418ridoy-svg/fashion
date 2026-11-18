@@ -23,6 +23,11 @@ router.use(adminAuth);
 
 router.post('/generate', aiController.generate);
 
+router.post('/product-content', aiController.productContent);
+router.post('/product-seo', aiController.productSEO);
+router.post('/product-attributes', aiController.productAttributes);
+router.post('/product-category', aiController.productCategory);
+
 // ========================================
 // GET: Gemini Health Check
 // ========================================

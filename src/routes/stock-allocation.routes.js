@@ -10,6 +10,9 @@ const adminAuth = require('../middleware/adminAuth');
 const stockAllocationService = require(
   '../services/inventory/stock-allocation.service'
 );
+const stockRestoreService = require(
+  '../services/inventory/stock-restore.service'
+);
 
 // ========================================
 // Async Handler
@@ -79,6 +82,38 @@ router.get(
     return res.status(200).json({
       success: true,
       data: result
+    });
+  })
+);
+
+router.post(
+  '/:orderId/:productId/restore',
+  asyncHandler(async (req, res) => {
+    const result = await stockRestoreService.restoreStock({
+      orderId: req.params.orderId,
+      productId: req.params.productId,
+      reason: req.body?.reason
+    });
+
+    res.json({
+      success: true,
+      message: result.alreadyRestored
+        ? 'Stock was already restored.'
+        : 'Stock restored to its original Lot.',
+      data: result
+    });
+  })
+);
+
+router.get(
+  '/:orderId/:productId/restore',
+  asyncHandler(async (req, res) => {
+    res.json({
+      success: true,
+      data: await stockRestoreService.getStockRestoreStatus(
+        req.params.orderId,
+        req.params.productId
+      )
     });
   })
 );

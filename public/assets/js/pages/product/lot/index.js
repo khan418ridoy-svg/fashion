@@ -130,7 +130,7 @@ import {
 } from './lot-create.js';
 
 // ========================================
-// LOT VARIANTS
+// LOT STOCK QUANTITY
 // ========================================
 
 import {
@@ -253,7 +253,7 @@ function initializeLotModules(productId) {
   // Lot List
   initProductLots();
 
-  // Lot Variants
+  // Lot Stock Quantity
   initLotVariants();
 
   // Lot Cost

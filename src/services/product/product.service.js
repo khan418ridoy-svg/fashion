@@ -22,7 +22,13 @@ const {
 } = require('./product-sku.service');
 
 const {
+  prepareUniqueSlug,
+  prepareSlugRelease
+} = require('./product-slug.service');
+
+const {
   prepareProductChange,
+  prepareProductChanges,
   getCatalogMeta
 } = require('./product-cache.service');
 
@@ -142,8 +148,76 @@ function normalizeNewProduct(payload) {
   );
 
   product.active = product.active === true;
+  product.status = product.active ? 'active' : 'draft';
 
   return product;
+}
+
+function variantToken(value, fallback) {
+  const token = cleanString(value, 80)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return token || fallback;
+}
+
+function normalizeInventoryVariants(variants, productSku, existingVariants = []) {
+  const usedSkus = new Set();
+
+  return (Array.isArray(variants) ? variants : []).map((variant, index) => {
+    const incomingId = cleanString(variant.id || variant.variantId, 128);
+    const incomingSku = cleanString(variant.sku || variant.variantSku, 100).toUpperCase();
+    const color = cleanString(variant.color, 100);
+    const size = cleanString(variant.size, 100);
+
+    const existing = existingVariants.find(item => {
+      const existingId = cleanString(item.id || item.variantId, 128);
+      const existingSku = cleanString(item.sku || item.variantSku, 100).toUpperCase();
+      return (
+        (incomingId && existingId === incomingId) ||
+        (incomingSku && existingSku === incomingSku) ||
+        (
+          cleanString(item.color, 100).toLowerCase() === color.toLowerCase() &&
+          cleanString(item.size, 100).toLowerCase() === size.toLowerCase()
+        )
+      );
+    });
+
+    const variantId = cleanString(
+      existing?.id || existing?.variantId || incomingId,
+      128
+    ) || `variant-${index + 1}`;
+
+    const baseSku = cleanString(
+      existing?.sku || existing?.variantSku || incomingSku,
+      100
+    ) || [
+      productSku,
+      variantToken(color, `COLOR${index + 1}`),
+      variantToken(size, `SIZE${index + 1}`)
+    ].filter(Boolean).join('-').slice(0, 100);
+
+    let variantSku = baseSku;
+    let suffix = 2;
+    while (usedSkus.has(variantSku)) {
+      variantSku = `${baseSku.slice(0, 94)}-${suffix++}`;
+    }
+    usedSkus.add(variantSku);
+
+    const stock = Number(existing?.stock || 0);
+
+    return {
+      ...variant,
+      id: variantId,
+      variantId,
+      sku: variantSku,
+      variantSku,
+      color,
+      size,
+      stock: Number.isSafeInteger(stock) && stock >= 0 ? stock : 0
+    };
+  });
 }
 
 // --------------------------------------------------
@@ -205,12 +279,21 @@ async function createProduct(payload = {}) {
       });
     }
 
-    const cachePlan = await prepareProductChange({
+    const slugPlan = await prepareUniqueSlug({
       db,
       transaction,
       productId: productRef.id,
-      action: 'created'
+      requestedSlug: product.slug
     });
+
+    const cachePlan = product.active
+      ? await prepareProductChange({
+          db,
+          transaction,
+          productId: productRef.id,
+          action: 'created'
+        })
+      : null;
 
     // ======================================
     // WRITE PHASE
@@ -223,6 +306,19 @@ async function createProduct(payload = {}) {
 
       id: productRef.id,
       sku: skuPlan.sku,
+      slug: slugPlan.slug,
+
+      seo: {
+        ...(isPlainObject(product.seo) ? product.seo : {}),
+        slug: slugPlan.slug
+      },
+
+      variants: normalizeInventoryVariants(
+        product.variants,
+        skuPlan.sku
+      ),
+
+      totalStock: 0,
 
       version: 1,
 
@@ -235,8 +331,9 @@ async function createProduct(payload = {}) {
     transaction.create(productRef, document);
 
     skuPlan.write(transaction);
+    slugPlan.write(transaction);
 
-    cachePlan.write(transaction);
+    cachePlan?.write(transaction);
 
     return {
       id: productRef.id,
@@ -473,6 +570,12 @@ async function updateProduct(productId, payload = {}) {
     const updatedProduct = normalizeNewProduct(merged);
 
     updatedProduct.sku = requestedSku;
+    updatedProduct.variants = normalizeInventoryVariants(
+      updatedProduct.variants,
+      requestedSku,
+      Array.isArray(existing.variants) ? existing.variants : []
+    );
+    updatedProduct.totalStock = Number(existing.totalStock || 0);
 
     let releasePlan = null;
     let claimPlan = null;
@@ -495,12 +598,31 @@ async function updateProduct(productId, payload = {}) {
       });
     }
 
-    const cachePlan = await prepareProductChange({
+    const slugPlan = await prepareUniqueSlug({
       db,
       transaction,
       productId: id,
-      action: 'updated'
+      requestedSlug: updatedProduct.slug,
+      currentSlug: existing.slug || ''
     });
+
+    const wasActive = existing.active === true;
+    const isActive = updatedProduct.active === true;
+    const cacheAction = !wasActive && isActive
+      ? 'created'
+      : wasActive && !isActive
+        ? 'deleted'
+        : isActive
+          ? 'updated'
+          : null;
+    const cachePlan = cacheAction
+      ? await prepareProductChange({
+          db,
+          transaction,
+          productId: id,
+          action: cacheAction
+        })
+      : null;
 
     // ======================================
     // WRITE PHASE
@@ -512,6 +634,14 @@ async function updateProduct(productId, payload = {}) {
       ...updatedProduct,
 
       id,
+      slug: slugPlan.slug,
+
+      seo: {
+        ...(isPlainObject(updatedProduct.seo)
+          ? updatedProduct.seo
+          : {}),
+        slug: slugPlan.slug
+      },
 
       version: Number(existing.version || 0) + 1,
 
@@ -526,7 +656,9 @@ async function updateProduct(productId, payload = {}) {
       claimPlan.write(transaction);
     }
 
-    cachePlan.write(transaction);
+    slugPlan.write(transaction);
+
+    cachePlan?.write(transaction);
 
     return document;
   });
@@ -582,12 +714,23 @@ async function deleteProduct(productId) {
       sku
     });
 
-    const cachePlan = await prepareProductChange({
-      db,
-      transaction,
-      productId: id,
-      action: 'deleted'
-    });
+    const slugReleasePlan = existing.slug
+      ? await prepareSlugRelease({
+          db,
+          transaction,
+          productId: id,
+          slug: existing.slug
+        })
+      : null;
+
+    const cachePlan = existing.active === true
+      ? await prepareProductChange({
+          db,
+          transaction,
+          productId: id,
+          action: 'deleted'
+        })
+      : null;
 
     // ======================================
     // WRITE PHASE
@@ -599,6 +742,7 @@ async function deleteProduct(productId) {
       productRef,
       {
         active: false,
+        status: 'archived',
         deleted: true,
 
         deletedAt: now,
@@ -610,13 +754,111 @@ async function deleteProduct(productId) {
     );
 
     releasePlan.write(transaction);
+    slugReleasePlan?.write(transaction);
 
-    cachePlan.write(transaction);
+    cachePlan?.write(transaction);
 
     return {
       success: true,
       id,
       deleted: true
+    };
+  });
+}
+
+async function activateProducts(productIds = []) {
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    throw new ProductError(
+      'At least one Product must be selected.',
+      400,
+      'PRODUCT_SELECTION_REQUIRED'
+    );
+  }
+
+  const ids = [...new Set(productIds.map(validateProductId))];
+
+  if (ids.length > 100) {
+    throw new ProductError(
+      'A maximum of 100 Products can be activated at once.',
+      400,
+      'PRODUCT_SELECTION_LIMIT'
+    );
+  }
+
+  return db.runTransaction(async transaction => {
+    const records = [];
+
+    for (const id of ids) {
+      const ref = getProductRef(id);
+      const snapshot = await transaction.get(ref);
+
+      if (!snapshot.exists) {
+        throw createNotFoundError();
+      }
+
+      const product = snapshot.data() || {};
+
+      if (product.deleted === true) {
+        throw new ProductError(
+          'Archived products cannot be activated.',
+          409,
+          'PRODUCT_ARCHIVED'
+        );
+      }
+
+      records.push({
+        id,
+        ref,
+        product
+      });
+    }
+
+    const drafts = records.filter(record => (
+      record.product.active !== true
+    ));
+    const cachePlan = drafts.length
+      ? await prepareProductChanges({
+          db,
+          transaction,
+          changes: drafts.map(record => ({
+            productId: record.id,
+            action: 'created'
+          }))
+        })
+      : null;
+    const now = new Date();
+    const activatedProducts = [];
+
+    for (const record of records) {
+      const wasActive = record.product.active === true;
+      const version = wasActive
+        ? Number(record.product.version || 0)
+        : Number(record.product.version || 0) + 1;
+
+      if (!wasActive) {
+        transaction.set(record.ref, {
+          active: true,
+          status: 'active',
+          version,
+          updatedAt: now
+        }, { merge: true });
+      }
+
+      activatedProducts.push({
+        id: record.id,
+        active: true,
+        status: 'active',
+        version,
+        alreadyActive: wasActive
+      });
+    }
+
+    cachePlan?.write(transaction);
+
+    return {
+      products: activatedProducts,
+      activatedCount: drafts.length,
+      alreadyActiveCount: records.length - drafts.length
     };
   });
 }
@@ -627,6 +869,45 @@ async function deleteProduct(productId) {
 
 async function getProductCatalogVersion() {
   return getCatalogMeta(db);
+}
+
+async function getProductCosts(productId) {
+  const product = await getProduct(productId);
+  const source = product.cost && typeof product.cost === 'object'
+    ? product.cost
+    : product;
+
+  return {
+    buyPrice: Number(source.buyPrice || 0),
+    supplier: cleanString(source.supplier, 150),
+    purchaseNote: cleanString(source.purchaseNote, 1000)
+  };
+}
+
+async function updateProductCosts(productId, payload = {}) {
+  const id = validateProductId(productId);
+  const buyPrice = toNumber(payload.buyPrice, { min: 0 });
+  const cost = {
+    buyPrice,
+    supplier: cleanString(payload.supplier, 150),
+    purchaseNote: cleanString(payload.purchaseNote, 1000)
+  };
+
+  const productRef = getProductRef(id);
+  const snapshot = await productRef.get();
+  if (!snapshot.exists || snapshot.data()?.deleted === true) {
+    throw createNotFoundError();
+  }
+
+  await productRef.set({
+    cost,
+    buyPrice,
+    supplier: cost.supplier,
+    purchaseNote: cost.purchaseNote,
+    updatedAt: new Date()
+  }, { merge: true });
+
+  return cost;
 }
 
 // --------------------------------------------------
@@ -642,7 +923,10 @@ module.exports = {
   listProducts,
 
   updateProduct,
+  activateProducts,
   deleteProduct,
 
-  getProductCatalogVersion
+  getProductCatalogVersion,
+  getProductCosts,
+  updateProductCosts
 };

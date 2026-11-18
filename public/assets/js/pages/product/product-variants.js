@@ -89,10 +89,12 @@ function createVariant(data = {}) {
   return {
     localId: data.localId || generateVariantId(),
 
+    variantId: data.variantId || data.id || '',
+
     color: data.color || '',
     size: data.size || '',
 
-    variantSku: data.variantSku || '',
+    variantSku: data.variantSku || data.sku || '',
     barcode: data.barcode || '',
 
     regularPrice,
@@ -122,12 +124,18 @@ function getVariantHTML(variant, index) {
       <div class="product-variant-header">
         <strong>Variant ${index + 1}</strong>
 
-        <button type="button"
-                class="remove-product-variant"
-                data-action="remove"
-                aria-label="Remove variant">
-          Remove
-        </button>
+        <div class="product-variant-header-actions">
+          <button type="button" class="btn btn-sm btn-secondary"
+                  data-action="add-size">
+            + Add Size
+          </button>
+          <button type="button"
+                  class="remove-product-variant"
+                  data-action="remove"
+                  aria-label="Remove variant">
+            Remove
+          </button>
+        </div>
       </div>
 
       <div class="product-variant-grid">
@@ -193,7 +201,7 @@ function getVariantHTML(variant, index) {
         </label>
 
         <label>
-          Buy Price (Optional)
+          Purchase Cost Override (Optional)
           <input type="number"
                  data-field="buyPrice"
                  min="0"
@@ -464,6 +472,8 @@ export function validateProductVariants() {
 
 export function getProductVariantsData() {
   return variants.map(variant => ({
+    variantId: variant.variantId,
+
     color: variant.color.trim(),
     size: variant.size.trim(),
 
@@ -540,9 +550,7 @@ function bindVariantEvents() {
   });
 
   container?.addEventListener('click', event => {
-    const button = event.target.closest(
-      '[data-action="remove"]'
-    );
+    const button = event.target.closest('[data-action]');
 
     if (!button) return;
 
@@ -550,7 +558,28 @@ function bindVariantEvents() {
 
     if (!item) return;
 
-    removeProductVariant(item.dataset.variantId);
+    if (button.dataset.action === 'add-size') {
+      const source = variants.find(
+        variant => variant.localId === item.dataset.variantId
+      );
+
+      if (source) {
+        addProductVariant({
+          color: source.color,
+          regularPrice: source.regularPrice,
+          sellingPrice: source.sellingPrice,
+          buyPrice: source.buyPrice,
+          lowStockAlert: source.lowStockAlert,
+          isActive: source.isActive,
+          size: ''
+        });
+      }
+      return;
+    }
+
+    if (button.dataset.action === 'remove') {
+      removeProductVariant(item.dataset.variantId);
+    }
   });
 
   container.dataset.variantEventsBound = 'true';

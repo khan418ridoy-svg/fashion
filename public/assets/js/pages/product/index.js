@@ -2,6 +2,7 @@
 'use strict';
 
 import { createElement, escapeHTML } from '../../helpers.js';
+import { productApiRequest } from './product-utils.js';
 
 // ========================================
 // STATE
@@ -11,10 +12,15 @@ let pageRoot = null;
 let currentSignal = null;
 let productFormModule = null;
 let formOpen = false;
+let formOpening = false;
 
 let products = [];
 let searchText = '';
 let statusFilter = 'all';
+let productsLoading = false;
+let selectedProductIds = new Set();
+let viewProductId = null;
+let activationInProgress = false;
 
 // ========================================
 // HELPERS
@@ -33,7 +39,12 @@ function formatMoney(value) {
 }
 
 function getProductName(product) {
-  return product.name || product.title || 'Unnamed Product';
+  return (
+    product.name ||
+    product.title ||
+    product.basic?.name ||
+    'Unnamed Product'
+  );
 }
 
 function getProductStock(product) {
@@ -42,12 +53,38 @@ function getProductStock(product) {
     product.availableQuantity ??
     product.totalStock ??
     product.stock ??
+    product.inventory?.availableStock ??
+    product.inventory?.totalStock ??
     0
   );
 }
 
 function getProductStatus(product) {
+  if (product.active === true) return 'active';
+  if (product.deleted === true) return 'archived';
+  if (product.active === false) return 'draft';
+
   return String(product.status || 'draft').toLowerCase();
+}
+
+function getProductImage(product) {
+  const imageData = product.image ||
+    product.thumbnail ||
+    product.images?.[0] ||
+    '';
+
+  return typeof imageData === 'string'
+    ? imageData
+    : imageData?.url || imageData?.src || '';
+}
+
+function getProductPrice(product) {
+  return Number(
+    product.sellingPrice ??
+    product.price ??
+    product.pricing?.sellingPrice ??
+    0
+  );
 }
 
 function showMessage(message, type = 'info') {
@@ -65,6 +102,359 @@ function showMessage(message, type = 'info') {
   element.className = `products-page-message ${type}`;
   element.textContent = message;
   element.hidden = false;
+}
+
+function getProductList(result) {
+  const candidates = [
+    result?.data?.products,
+    result?.data?.items,
+    result?.data?.data,
+    result?.data,
+    result?.products,
+    result?.items,
+    result
+  ];
+
+  return candidates.find(Array.isArray) || [];
+}
+
+function renderStockPickerOptions() {
+  if (!pageRoot) return;
+
+  const select = pageRoot.querySelector('#products-stock-product');
+  if (!select) return;
+
+  const currentValue = select.value;
+  const placeholder = document.createElement('option');
+
+  placeholder.value = '';
+  placeholder.textContent = 'Select a Product';
+
+  select.replaceChildren(placeholder);
+
+  products.forEach(product => {
+    const option = document.createElement('option');
+
+    option.value = product.id;
+    option.textContent = [
+      getProductName(product),
+      product.productCode ||
+        product.basic?.productCode ||
+        product.sku ||
+        product.basic?.sku ||
+        ''
+    ].filter(Boolean).join(' — ');
+
+    select.appendChild(option);
+  });
+
+  if (products.some(product => product.id === currentValue)) {
+    select.value = currentValue;
+  }
+}
+
+function closeStockPicker() {
+  const modal = pageRoot?.querySelector('#products-stock-picker');
+  if (!modal) return;
+
+  modal.classList.remove('is-open');
+  modal.hidden = true;
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+function openStockPicker() {
+  const modal = pageRoot?.querySelector('#products-stock-picker');
+  const select = pageRoot?.querySelector('#products-stock-product');
+
+  if (!modal || !select) return false;
+
+  renderStockPickerOptions();
+  select.value = '';
+  modal.hidden = false;
+  modal.classList.add('is-open');
+  modal.setAttribute('aria-hidden', 'false');
+
+  window.setTimeout(() => select.focus(), 0);
+  return true;
+}
+
+function getDraftProducts(items = products) {
+  return items.filter(product => (
+    product.id && getProductStatus(product) === 'draft'
+  ));
+}
+
+function renderBulkActions() {
+  if (!pageRoot) return;
+
+  const existingDraftIds = new Set(
+    getDraftProducts().map(product => product.id)
+  );
+
+  selectedProductIds = new Set(
+    [...selectedProductIds].filter(id => existingDraftIds.has(id))
+  );
+
+  const bar = pageRoot.querySelector('#products-bulk-actions');
+  const count = pageRoot.querySelector('#products-selected-count');
+  const activateButton = pageRoot.querySelector(
+    '[data-products-action="activate-selected"]'
+  );
+  const selectAll = pageRoot.querySelector('#products-select-all');
+  const visibleDrafts = getDraftProducts(getFilteredProducts());
+  const selectedVisibleCount = visibleDrafts.filter(product => (
+    selectedProductIds.has(product.id)
+  )).length;
+
+  if (bar) bar.hidden = selectedProductIds.size === 0;
+  if (count) {
+    count.textContent = `${selectedProductIds.size} draft Product(s) selected`;
+  }
+  if (activateButton) {
+    activateButton.disabled = activationInProgress || selectedProductIds.size === 0;
+    activateButton.textContent = activationInProgress
+      ? 'Activating...'
+      : 'Activate Selected';
+  }
+  if (selectAll) {
+    selectAll.disabled = visibleDrafts.length === 0 || activationInProgress;
+    selectAll.checked = visibleDrafts.length > 0 &&
+      selectedVisibleCount === visibleDrafts.length;
+    selectAll.indeterminate = selectedVisibleCount > 0 &&
+      selectedVisibleCount < visibleDrafts.length;
+  }
+}
+
+function closeProductView() {
+  const modal = pageRoot?.querySelector('#product-view-modal');
+
+  if (!modal) return;
+
+  modal.classList.remove('is-open');
+  modal.hidden = true;
+  modal.setAttribute('aria-hidden', 'true');
+  viewProductId = null;
+}
+
+function renderProductView(product) {
+  if (!pageRoot || !product) return;
+
+  const body = pageRoot.querySelector('#product-view-body');
+  const title = pageRoot.querySelector('#product-view-title');
+  const activateButton = pageRoot.querySelector(
+    '[data-products-action="activate-view"]'
+  );
+  const editButton = pageRoot.querySelector(
+    '[data-products-action="edit-view"]'
+  );
+  const status = getProductStatus(product);
+  const image = getProductImage(product);
+  const productName = getProductName(product);
+  const sku = product.sku || product.basic?.sku || '—';
+  const productCode = product.productCode || product.basic?.productCode || '—';
+  const brand = product.brand || product.basic?.brand || '—';
+  const category = product.categoryName ||
+    product.category?.categoryName ||
+    product.category?.name ||
+    product.categoryId ||
+    '—';
+  const variants = Array.isArray(product.variants)
+    ? product.variants.length
+    : 0;
+  const descriptionSource = product.shortDescription ||
+    product.description?.shortDescription ||
+    product.description?.description ||
+    product.description;
+  const description = typeof descriptionSource === 'string'
+    ? descriptionSource
+    : 'No description added.';
+
+  if (title) title.textContent = productName;
+
+  if (body) {
+    body.innerHTML = `
+      <div class="product-view-hero">
+        <div class="product-view-image">
+          ${image
+            ? `<img src="${escapeHTML(image)}" alt="${escapeHTML(productName)}">`
+            : '<span aria-hidden="true">📦</span>'}
+        </div>
+
+        <div class="product-view-heading">
+          <span class="product-status product-status-${escapeHTML(status)}">
+            ${escapeHTML(status)}
+          </span>
+          <h4>${escapeHTML(productName)}</h4>
+          <p>${escapeHTML(String(description))}</p>
+        </div>
+      </div>
+
+      <div class="product-view-stats">
+        <div><span>Current Stock</span><strong>${escapeHTML(formatNumber(getProductStock(product)))}</strong></div>
+        <div><span>Selling Price</span><strong>${escapeHTML(formatMoney(getProductPrice(product)))}</strong></div>
+        <div><span>Variants</span><strong>${variants}</strong></div>
+      </div>
+
+      <dl class="product-view-details">
+        <div><dt>SKU</dt><dd>${escapeHTML(sku)}</dd></div>
+        <div><dt>Product Code</dt><dd>${escapeHTML(productCode)}</dd></div>
+        <div><dt>Brand</dt><dd>${escapeHTML(brand)}</dd></div>
+        <div><dt>Category</dt><dd>${escapeHTML(String(category))}</dd></div>
+      </dl>
+    `;
+  }
+
+  if (activateButton) {
+    activateButton.hidden = status !== 'draft';
+    activateButton.disabled = activationInProgress;
+    activateButton.dataset.productId = product.id;
+    activateButton.textContent = activationInProgress
+      ? 'Activating...'
+      : 'Activate Product';
+  }
+  if (editButton) editButton.dataset.productId = product.id;
+}
+
+function openProductView(product) {
+  const modal = pageRoot?.querySelector('#product-view-modal');
+
+  if (!modal || !product?.id) return false;
+
+  viewProductId = product.id;
+  renderProductView(product);
+  modal.hidden = false;
+  modal.classList.add('is-open');
+  modal.setAttribute('aria-hidden', 'false');
+
+  window.setTimeout(() => (
+    modal.querySelector('[data-products-action="close-view"]')?.focus()
+  ), 0);
+
+  return true;
+}
+
+async function activateProductIds(productIds) {
+  if (activationInProgress) return false;
+
+  const ids = [...new Set(productIds)].filter(id => (
+    products.some(product => (
+      product.id === id && getProductStatus(product) === 'draft'
+    ))
+  ));
+
+  if (!ids.length) {
+    showMessage('Select at least one draft Product.', 'warning');
+    return false;
+  }
+
+  activationInProgress = true;
+  renderBulkActions();
+
+  if (viewProductId) {
+    const viewedProduct = products.find(product => product.id === viewProductId);
+    if (viewedProduct) renderProductView(viewedProduct);
+  }
+
+  try {
+    const result = await productApiRequest('/api/products/activate', {
+      method: 'POST',
+      body: JSON.stringify({ productIds: ids })
+    });
+    const updatedProducts = Array.isArray(result.products)
+      ? result.products
+      : Array.isArray(result.data?.products)
+        ? result.data.products
+        : [];
+    const updates = new Map(updatedProducts.map(product => [product.id, product]));
+
+    products = products.map(product => (
+      ids.includes(product.id)
+        ? {
+            ...product,
+            ...(updates.get(product.id) || {}),
+            active: true,
+            status: 'active'
+          }
+        : product
+    ));
+
+    ids.forEach(id => selectedProductIds.delete(id));
+    renderSummary();
+    renderProductTable();
+
+    if (viewProductId) {
+      const viewedProduct = products.find(product => product.id === viewProductId);
+      if (viewedProduct) renderProductView(viewedProduct);
+    }
+
+    showMessage(`${ids.length} Product(s) activated successfully.`, 'success');
+    return true;
+  } catch (error) {
+    console.error('[PRODUCT ACTIVATE]', error);
+    showMessage(error.message || 'Product activation failed.', 'error');
+    return false;
+  } finally {
+    activationInProgress = false;
+    renderBulkActions();
+
+    if (viewProductId) {
+      const viewedProduct = products.find(product => product.id === viewProductId);
+      if (viewedProduct) renderProductView(viewedProduct);
+    }
+  }
+}
+
+function handleLotCreated(event) {
+  const productId = String(event.detail?.productId || '');
+  const updatedProduct = event.detail?.product;
+
+  if (!productId || !updatedProduct) return;
+
+  products = products.map(product => (
+    product.id === productId
+      ? { ...product, ...updatedProduct, id: productId }
+      : product
+  ));
+
+  renderSummary();
+  renderProductTable();
+}
+
+function handleProductSaved(event) {
+  const savedProduct = event.detail?.product;
+  const productId = String(
+    savedProduct?.id || savedProduct?.productId || ''
+  );
+
+  if (!savedProduct || !productId) return;
+
+  const normalizedProduct = {
+    ...savedProduct,
+    id: productId
+  };
+  const existingProduct = products.find(
+    product => product.id === productId
+  );
+  const nextProducts = existingProduct
+    ? products.map(product => (
+        product.id === productId
+          ? { ...product, ...normalizedProduct }
+          : product
+      ))
+    : [normalizedProduct, ...products];
+
+  setProducts(nextProducts);
+
+  if (event.detail?.redirectToIndex === true) {
+    closeProductForm();
+    showMessage(
+      event.detail?.isUpdate
+        ? 'Product updated successfully.'
+        : 'Product saved successfully.',
+      'success'
+    );
+    void loadProducts();
+  }
 }
 
 // ========================================
@@ -172,8 +562,8 @@ function getFilteredProducts() {
 
     const searchable = [
       getProductName(product),
-      product.productCode,
-      product.sku,
+      product.productCode || product.basic?.productCode,
+      product.sku || product.basic?.sku,
       product.brand,
       product.barcode
     ].join(' ').toLowerCase();
@@ -197,22 +587,33 @@ function getFilteredProducts() {
 function createProductRow(product) {
   const row = document.createElement('tr');
 
-  const id = String(product.id || product.productId || '');
+  const id = String(product.id || product.productId || product._id || '');
 
   const name = getProductName(product);
   const stock = getProductStock(product);
   const status = getProductStatus(product);
 
-  const image = product.image ||
-    product.thumbnail ||
-    product.images?.[0] ||
-    '';
-
-  const price = product.sellingPrice ??
-    product.price ??
-    0;
+  const image = getProductImage(product);
+  const price = getProductPrice(product);
 
   const imageCell = document.createElement('td');
+  const imageWrap = document.createElement('div');
+  const selectControl = document.createElement('label');
+  const selectInput = document.createElement('input');
+
+  imageCell.className = 'product-select-cell';
+  imageWrap.className = 'product-table-image-wrap';
+  selectControl.className = 'product-row-select-control';
+  selectControl.title = status === 'draft'
+    ? 'Select draft Product'
+    : 'Only draft Products can be selected';
+  selectInput.type = 'checkbox';
+  selectInput.dataset.productSelect = id;
+  selectInput.checked = selectedProductIds.has(id);
+  selectInput.disabled = status !== 'draft' || activationInProgress || !id;
+  selectInput.setAttribute('aria-label', `Select ${name}`);
+  selectControl.appendChild(selectInput);
+  imageWrap.appendChild(selectControl);
 
   if (image) {
     const img = document.createElement('img');
@@ -222,11 +623,16 @@ function createProductRow(product) {
     img.loading = 'lazy';
     img.className = 'product-table-image';
 
-    imageCell.appendChild(img);
+    imageWrap.appendChild(img);
   } else {
-    imageCell.textContent = '📦';
-    imageCell.className = 'product-table-image-placeholder';
+    const placeholder = document.createElement('span');
+
+    placeholder.textContent = '📦';
+    placeholder.className = 'product-table-image-placeholder';
+    imageWrap.appendChild(placeholder);
   }
+
+  imageCell.appendChild(imageWrap);
 
   const nameCell = document.createElement('td');
 
@@ -236,7 +642,11 @@ function createProductRow(product) {
   const codeElement = document.createElement('small');
 
   codeElement.textContent =
-    product.productCode || product.sku || 'No code';
+    product.productCode ||
+    product.basic?.productCode ||
+    product.sku ||
+    product.basic?.sku ||
+    'No code';
 
   nameCell.append(nameElement, codeElement);
 
@@ -304,19 +714,54 @@ function renderProductTable() {
   const body = pageRoot.querySelector('#products-table-body');
   const empty = pageRoot.querySelector('#products-empty');
   const count = pageRoot.querySelector('#products-result-count');
+  const refreshButton = pageRoot.querySelector(
+    '[data-products-action="refresh"]'
+  );
+  const addStockButton = pageRoot.querySelector(
+    '[data-products-action="add-stock"]'
+  );
 
   if (!body) return;
+
+  if (refreshButton) refreshButton.disabled = productsLoading;
+  if (addStockButton) addStockButton.disabled = productsLoading;
 
   const filtered = getFilteredProducts();
 
   body.replaceChildren();
 
   if (count) {
-    count.textContent = `${filtered.length} products`;
+    count.textContent = productsLoading
+      ? 'Loading products...'
+      : `${filtered.length} products`;
   }
 
   if (!filtered.length) {
-    if (empty) empty.hidden = false;
+    if (empty) {
+      const title = empty.querySelector('h3');
+      const description = empty.querySelector('p');
+      const addButton = empty.querySelector(
+        '[data-products-action="add-product"]'
+      );
+
+      if (title) {
+        title.textContent = productsLoading
+          ? 'Loading Products...'
+          : 'No Products Found';
+      }
+
+      if (description) {
+        description.textContent = productsLoading
+          ? 'Please wait while the product list is loading.'
+          : 'Create a Product first, then you can add stock with a Purchase Lot.';
+      }
+
+      if (addButton) addButton.hidden = productsLoading;
+      empty.hidden = false;
+    }
+
+    renderStockPickerOptions();
+    renderBulkActions();
     return;
   }
 
@@ -325,6 +770,9 @@ function renderProductTable() {
   filtered.forEach(product => {
     body.appendChild(createProductRow(product));
   });
+
+  renderStockPickerOptions();
+  renderBulkActions();
 }
 
 // ========================================
@@ -338,10 +786,28 @@ export function setProducts(data = []) {
     return;
   }
 
-  products = data.map(product => ({
-    ...product,
-    id: String(product.id || product.productId || '')
-  }));
+  const uniqueProducts = new Map();
+
+  data.forEach(product => {
+    const id = String(
+      product?.id || product?.productId || product?._id || ''
+    );
+
+    if (!id) return;
+
+    uniqueProducts.set(id, {
+      ...(uniqueProducts.get(id) || {}),
+      ...product,
+      id
+    });
+  });
+
+  products = [...uniqueProducts.values()];
+  const draftIds = new Set(getDraftProducts().map(product => product.id));
+
+  selectedProductIds = new Set(
+    [...selectedProductIds].filter(id => draftIds.has(id))
+  );
 
   renderSummary();
   renderProductTable();
@@ -355,12 +821,60 @@ export function getProducts() {
   return products.map(product => ({ ...product }));
 }
 
+async function loadProducts({ announce = false } = {}) {
+  if (productsLoading) return false;
+
+  productsLoading = true;
+  renderProductTable();
+
+  try {
+    const result = await productApiRequest('/api/products', {
+      method: 'GET',
+      ...(currentSignal ? { signal: currentSignal } : {})
+    });
+
+    if (currentSignal?.aborted) return false;
+
+    setProducts(getProductList(result));
+
+    if (announce) {
+      showMessage(
+        'Product list refresh হয়েছে। / Product list refreshed.',
+        'success'
+      );
+    }
+
+    return true;
+  } catch (error) {
+    if (error.name === 'AbortError') return false;
+
+    console.error('[PRODUCTS LOAD]', error);
+    showMessage(
+      error.message || 'Product list load করা যায়নি। / Unable to load products.',
+      'error'
+    );
+    return false;
+  } finally {
+    productsLoading = false;
+
+    if (!currentSignal?.aborted) {
+      renderSummary();
+      renderProductTable();
+    }
+  }
+}
+
 // ========================================
 // OPEN PRODUCT FORM
 // ========================================
 
-async function openProductForm(product = null) {
-  if (!pageRoot || formOpen) return;
+async function openProductForm(product = null, {
+  openLot = false,
+  focusLots = false
+} = {}) {
+  if (!pageRoot || formOpen || formOpening) return false;
+
+  formOpening = true;
 
   try {
     const module = await import('./product-form.js');
@@ -412,6 +926,27 @@ async function openProductForm(product = null) {
 
     formOpen = true;
 
+    if (openLot) {
+      const lotButton = form.querySelector('#product-lot-create');
+
+      if (!lotButton) {
+        throw new Error('Purchase Lot form was not found.');
+      }
+
+      lotButton.click();
+    }
+
+    if (focusLots) {
+      window.setTimeout(() => {
+        form.querySelector('#product-lots-section')?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+      }, 0);
+    }
+
+    return true;
+
   } catch (error) {
     console.error('[PRODUCT FORM]', error);
 
@@ -419,6 +954,10 @@ async function openProductForm(product = null) {
       error.message || 'Product Form open করা যায়নি।',
       'error'
     );
+
+    return false;
+  } finally {
+    formOpening = false;
   }
 }
 
@@ -437,6 +976,7 @@ function closeProductForm() {
 
   productFormModule = null;
   formOpen = false;
+  formOpening = false;
 
   renderDashboardContent();
 }
@@ -447,6 +987,8 @@ function closeProductForm() {
 
 function renderDashboardContent() {
   if (!pageRoot) return;
+
+  viewProductId = null;
 
   const dashboard = pageRoot.querySelector('#products-dashboard-content');
 
@@ -515,13 +1057,28 @@ function renderDashboardContent() {
           </div>
         </div>
 
+        <div class="products-bulk-actions" id="products-bulk-actions" hidden>
+          <span id="products-selected-count">0 draft Products selected</span>
+
+          <button type="button" class="btn btn-primary"
+            data-products-action="activate-selected">
+            Activate Selected
+          </button>
+        </div>
+
         <div class="products-table-wrapper">
 
           <table class="products-table">
 
             <thead>
               <tr>
-                <th>Image</th>
+                <th>
+                  <label class="product-select-all-control">
+                    <input type="checkbox" id="products-select-all"
+                      aria-label="Select all visible draft Products">
+                    <span>Image</span>
+                  </label>
+                </th>
                 <th>Product</th>
                 <th>Available Stock</th>
                 <th>Selling Price</th>
@@ -536,7 +1093,7 @@ function renderDashboardContent() {
 
           <div id="products-empty" class="products-empty-state">
             <div class="products-empty-icon">📦</div>
-            <h3>No Products Loaded</h3>
+            <h3>No Products Found</h3>
             <p>
               Product list API এখনো যুক্ত করা হয়নি।
               Backend integration হলে Firebase-এর existing products এখানে দেখা যাবে।
@@ -553,6 +1110,63 @@ function renderDashboardContent() {
         </div>
 
       </section>
+
+      <div class="product-modal-overlay" id="products-stock-picker"
+        hidden aria-hidden="true">
+        <div class="product-modal" role="dialog" aria-modal="true"
+          aria-labelledby="products-stock-picker-title">
+          <div class="product-modal-header">
+            <h3 id="products-stock-picker-title">Add Stock</h3>
+            <p>স্টক যোগ করার Product নির্বাচন করুন। / Select a Product.</p>
+          </div>
+
+          <div class="products-stock-picker-body">
+            <label for="products-stock-product">Product</label>
+            <select id="products-stock-product" class="form-control" required></select>
+
+            <div class="product-modal-actions">
+              <button type="button" class="btn btn-secondary"
+                data-products-action="stock-picker-cancel">
+                Cancel
+              </button>
+              <button type="button" class="btn btn-primary"
+                data-products-action="stock-picker-confirm">
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="product-modal-overlay" id="product-view-modal"
+        hidden aria-hidden="true">
+        <div class="product-modal product-view-modal" role="dialog"
+          aria-modal="true" aria-labelledby="product-view-title">
+
+          <div class="product-modal-header product-view-modal-header">
+            <div>
+              <span class="product-view-eyebrow">Product Details</span>
+              <h3 id="product-view-title">Product</h3>
+            </div>
+
+            <button type="button" class="product-view-close"
+              data-products-action="close-view" aria-label="Close">×</button>
+          </div>
+
+          <div class="product-view-body" id="product-view-body"></div>
+
+          <div class="product-modal-actions product-view-actions">
+            <button type="button" class="btn btn-secondary"
+              data-products-action="close-view">Close</button>
+
+            <button type="button" class="btn btn-secondary"
+              data-products-action="edit-view">Edit Product</button>
+
+            <button type="button" class="btn btn-primary"
+              data-products-action="activate-view">Activate Product</button>
+          </div>
+        </div>
+      </div>
 
     </div>
   `;
@@ -588,9 +1202,14 @@ export function render() {
   pageRoot = renderPageMarkup();
 
   formOpen = false;
+  formOpening = false;
   products = [];
   searchText = '';
   statusFilter = 'all';
+  productsLoading = false;
+  selectedProductIds = new Set();
+  viewProductId = null;
+  activationInProgress = false;
 
   renderDashboardContent();
 
@@ -608,32 +1227,91 @@ async function handleAction(event) {
 
   const action = button.dataset.productsAction;
 
+  if (action === 'refresh') {
+    await loadProducts({ announce: true });
+    return;
+  }
+
+  if (action === 'activate-selected') {
+    await activateProductIds([...selectedProductIds]);
+    return;
+  }
+
+  if (action === 'close-view') {
+    closeProductView();
+    return;
+  }
+
+  if (action === 'activate-view') {
+    const productId = button.dataset.productId || viewProductId;
+    if (productId) await activateProductIds([productId]);
+    return;
+  }
+
+  if (action === 'edit-view') {
+    const productId = button.dataset.productId || viewProductId;
+    const product = products.find(item => item.id === productId);
+
+    if (product) {
+      closeProductView();
+      await openProductForm(product);
+    }
+    return;
+  }
+
+  if (action === 'add-stock') {
+    if (!products.length && !productsLoading) {
+      await loadProducts();
+    }
+
+    if (!products.length) {
+      showMessage(
+        'আগে একটি Product তৈরি করুন। / Create a Product before adding stock.',
+        'warning'
+      );
+      return;
+    }
+
+    if (products.length === 1) {
+      await openProductForm(products[0], { openLot: true });
+      return;
+    }
+
+    openStockPicker();
+    return;
+  }
+
+  if (action === 'stock-picker-cancel') {
+    closeStockPicker();
+    return;
+  }
+
+  if (action === 'stock-picker-confirm') {
+    const select = pageRoot.querySelector('#products-stock-product');
+    const product = products.find(item => item.id === select?.value);
+
+    if (!product) {
+      select?.reportValidity();
+      return;
+    }
+
+    closeStockPicker();
+    await openProductForm(product, { openLot: true });
+    return;
+  }
+
   if (action === 'add-product') {
     await openProductForm();
     return;
   }
 
-  if (action === 'refresh') {
-    showMessage(
-      'Product API যুক্ত না হওয়া পর্যন্ত Refresh থেকে Firebase data load করা যাবে না।',
-      'warning'
-    );
-    return;
-  }
-
-  if (action === 'add-stock') {
-    showMessage(
-      'আগে Product list API যুক্ত করতে হবে। এরপর Product নির্বাচন করে নতুন Purchase Lot তৈরি করা যাবে।',
-      'warning'
-    );
-  }
 }
 
 // ========================================
 // PRODUCT ROW ACTIONS
 // ========================================
 
-function handleProductAction(event) {
+async function handleProductAction(event) {
   const button = event.target.closest('[data-action]');
 
   if (!button || !pageRoot?.contains(button)) return;
@@ -645,11 +1323,13 @@ function handleProductAction(event) {
 
   if (!product) return;
 
+  if (action === 'stock') {
+    await openProductForm(product, { openLot: true });
+    return;
+  }
+
   if (action === 'view') {
-    showMessage(
-      'Product details API integration এখনো বাকি।',
-      'warning'
-    );
+    openProductView(product);
     return;
   }
 
@@ -658,19 +1338,8 @@ function handleProductAction(event) {
     return;
   }
 
-  if (action === 'stock') {
-    showMessage(
-      'এই Product-এর জন্য Purchase Lot API integration প্রয়োজন।',
-      'warning'
-    );
-    return;
-  }
-
   if (action === 'lots') {
-    showMessage(
-      'Product Lot details খুলতে backend integration প্রয়োজন।',
-      'warning'
-    );
+    await openProductForm(product, { focusLots: true });
   }
 }
 
@@ -692,6 +1361,16 @@ export function bindEvents({ container, signal } = {}) {
   currentSignal = signal || null;
 
   pageRoot.addEventListener('click', event => {
+    if (event.target.id === 'products-stock-picker') {
+      closeStockPicker();
+      return;
+    }
+
+    if (event.target.id === 'product-view-modal') {
+      closeProductView();
+      return;
+    }
+
     if (event.target.closest('#product-form-back')) {
       closeProductForm();
       return;
@@ -710,6 +1389,35 @@ export function bindEvents({ container, signal } = {}) {
   }, signal ? { signal } : undefined);
 
   pageRoot.addEventListener('change', event => {
+    if (event.target.matches('[data-product-select]')) {
+      const productId = event.target.dataset.productSelect;
+
+      if (event.target.checked) {
+        selectedProductIds.add(productId);
+      } else {
+        selectedProductIds.delete(productId);
+      }
+
+      renderBulkActions();
+      return;
+    }
+
+    if (event.target.id === 'products-select-all') {
+      const visibleDraftIds = getDraftProducts(getFilteredProducts())
+        .map(product => product.id);
+
+      visibleDraftIds.forEach(id => {
+        if (event.target.checked) {
+          selectedProductIds.add(id);
+        } else {
+          selectedProductIds.delete(id);
+        }
+      });
+
+      renderProductTable();
+      return;
+    }
+
     if (event.target.id !== 'products-status-filter') return;
 
     statusFilter = event.target.value;
@@ -717,7 +1425,21 @@ export function bindEvents({ container, signal } = {}) {
     renderProductTable();
   }, signal ? { signal } : undefined);
 
+  document.removeEventListener('product:lot-created', handleLotCreated);
+  document.addEventListener(
+    'product:lot-created',
+    handleLotCreated,
+    signal ? { signal } : undefined
+  );
+  document.removeEventListener('product:saved', handleProductSaved);
+  document.addEventListener(
+    'product:saved',
+    handleProductSaved,
+    signal ? { signal } : undefined
+  );
+
   console.info('[PRODUCTS] Dashboard initialized.');
+  void loadProducts();
 }
 
 // ========================================
@@ -725,6 +1447,9 @@ export function bindEvents({ container, signal } = {}) {
 // ========================================
 
 export function cleanup() {
+  document.removeEventListener('product:lot-created', handleLotCreated);
+  document.removeEventListener('product:saved', handleProductSaved);
+
   try {
     productFormModule?.cleanupProductForm?.();
   } catch (error) {
@@ -738,7 +1463,12 @@ export function cleanup() {
   products = [];
   searchText = '';
   statusFilter = 'all';
+  productsLoading = false;
   formOpen = false;
+  formOpening = false;
+  selectedProductIds = new Set();
+  viewProductId = null;
+  activationInProgress = false;
 
   console.info('[PRODUCTS] Dashboard cleaned up.');
 }

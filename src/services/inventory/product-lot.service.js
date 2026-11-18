@@ -19,6 +19,7 @@ const {
 const PRODUCTS_COLLECTION = 'products';
 const LOTS_COLLECTION = 'productLots';
 const META_COLLECTION = 'meta';
+const ALLOCATIONS_COLLECTION = 'orderStockAllocations';
 
 const LOT_COUNTER_DOCUMENT = 'productLotCounter';
 
@@ -89,6 +90,64 @@ function parseNumber(value, fieldName, options = {}) {
 
 function roundMoney(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function firstMoneyValue(...values) {
+  for (const value of values) {
+    if (value === '' || value === null || value === undefined) {
+      continue;
+    }
+
+    const number = Number(value);
+
+    if (Number.isFinite(number) && number >= 0) {
+      return roundMoney(number);
+    }
+  }
+
+  return null;
+}
+
+function getProductBuyPrice(product = {}) {
+  return firstMoneyValue(
+    product.cost?.buyPrice,
+    product.buyPrice,
+    product.purchaseCost
+  );
+}
+
+function getVariantBuyPrice(variant = {}, product = {}, lotInput = {}) {
+  return firstMoneyValue(
+    lotInput.buyPrice,
+    variant.buyPrice,
+    variant.cost?.buyPrice,
+    variant.purchaseCost,
+    getProductBuyPrice(product)
+  ) ?? 0;
+}
+
+function createDefaultProductVariant(productId, product = {}) {
+  const productSku = cleanString(
+    product.sku || product.basic?.sku,
+    100
+  );
+
+  return {
+    id: `default-${productId.slice(0, 110)}`,
+    variantId: `default-${productId.slice(0, 110)}`,
+    sku: productSku || `DEFAULT-${productId.slice(0, 80)}`,
+    variantSku: productSku || `DEFAULT-${productId.slice(0, 80)}`,
+    color: '',
+    size: '',
+    buyPrice: getProductBuyPrice(product) ?? 0,
+    stock: Number(
+      product.totalStock ??
+      product.stock ??
+      product.inventory?.totalStock ??
+      0
+    ),
+    isActive: true
+  };
 }
 
 function normalizePageSize(value) {
@@ -237,6 +296,10 @@ function normalizeLotInput(payload = {}) {
   }
 
   const supplier = cleanString(payload.supplier, 150);
+  const lotName = cleanString(
+    payload.lotName || payload.name,
+    100
+  );
 
   const purchaseDate = normalizePurchaseDate(
     payload.purchaseDate
@@ -281,6 +344,16 @@ function normalizeLotInput(payload = {}) {
 
       size: cleanString(item.size, 100),
 
+      buyPrice:
+        item.buyPrice === '' ||
+        item.buyPrice === null ||
+        item.buyPrice === undefined
+          ? null
+          : roundMoney(parseNumber(
+            item.buyPrice,
+            `Variant ${index + 1} buy price`
+          )),
+
       quantity: parseNumber(
         item.quantity,
         `Variant ${index + 1} quantity`,
@@ -302,26 +375,52 @@ function normalizeLotInput(payload = {}) {
     );
   }
 
-  const purchaseCost = roundMoney(
-    parseNumber(payload.purchaseCost, 'Purchase cost')
+  const nestedCosts = (
+    payload.costs &&
+    typeof payload.costs === 'object' &&
+    !Array.isArray(payload.costs)
+  ) ? payload.costs : {};
+
+  const purchaseCost = roundMoney(parseNumber(
+    payload.purchaseCost ?? nestedCosts.purchaseCost,
+    'Purchase cost'
+  ));
+
+  const transportCost = roundMoney(parseNumber(
+    payload.transportCost ?? nestedCosts.transportCost ?? 0,
+    'Transport cost'
+  ));
+
+  const otherCost = roundMoney(parseNumber(
+    payload.otherCost ?? nestedCosts.otherCost ?? 0,
+    'Other cost'
+  ));
+
+  const calculatedLandedCost = roundMoney(
+    purchaseCost + transportCost + otherCost
   );
 
   const landedCost = roundMoney(
     payload.landedCost === undefined ||
     payload.landedCost === null ||
     payload.landedCost === ''
-      ? purchaseCost
+      ? calculatedLandedCost
       : parseNumber(payload.landedCost, 'Landed cost')
   );
 
   return {
+    lotName,
     supplier,
     purchaseDate,
     variants,
     totalQuantity,
     purchaseCost,
+    transportCost,
+    otherCost,
     landedCost,
-    note: cleanString(payload.note, 1000)
+    note: cleanString(payload.note || payload.purchaseNote, 1000),
+    parentLotId: cleanString(payload.parentLotId, 128),
+    parentLotNumber: cleanString(payload.parentLotNumber, 100)
   };
 }
 
@@ -402,17 +501,11 @@ async function createProductLot(productId, payload = {}) {
       );
     }
 
-    if (!Array.isArray(product.variants) || product.variants.length === 0) {
-      throw createError(
-        'Product has no variants. Add Product variants first.',
-        409,
-        'PRODUCT_VARIANTS_REQUIRED'
-      );
-    }
-
-    const productVariants = product.variants.map(item => ({
-      ...item
-    }));
+    const productVariants = (
+      Array.isArray(product.variants) && product.variants.length > 0
+        ? product.variants
+        : [createDefaultProductVariant(id, product)]
+    ).map(item => ({ ...item }));
 
     const matchedVariants = input.variants.map(item => {
       const matched = findProductVariant(
@@ -473,27 +566,51 @@ async function createProductLot(productId, payload = {}) {
 
     // Prepare catalog version update.
     // This performs its Firestore read before any writes.
-    const cachePlan = await prepareProductChange({
-      db,
-      transaction,
-      productId: id,
-      action: 'stock_updated'
-    });
+    const cachePlan = product.active === true
+      ? await prepareProductChange({
+          db,
+          transaction,
+          productId: id,
+          action: 'updated'
+        })
+      : null;
 
     // ------------------------------------
     // COST ALLOCATION
     // ------------------------------------
 
-    const purchaseAllocations = allocateCost(
-      input.purchaseCost,
+    const purchaseAllocations = matchedVariants.map(item => {
+      const unitCost = getVariantBuyPrice(
+        item.matched,
+        product,
+        item.input
+      );
+
+      return {
+        unitCost,
+        totalCost: roundMoney(unitCost * item.input.quantity)
+      };
+    });
+
+    const calculatedPurchaseCost = roundMoney(
+      purchaseAllocations.reduce(
+        (total, item) => total + item.totalCost,
+        0
+      )
+    );
+
+    const additionalCost = roundMoney(
+      input.transportCost + input.otherCost
+    );
+
+    const additionalAllocations = allocateCost(
+      additionalCost,
       input.variants,
       input.totalQuantity
     );
 
-    const landedAllocations = allocateCost(
-      input.landedCost,
-      input.variants,
-      input.totalQuantity
+    const calculatedLandedCost = roundMoney(
+      calculatedPurchaseCost + additionalCost
     );
 
     // ------------------------------------
@@ -547,15 +664,26 @@ async function createProductLot(productId, payload = {}) {
 
         purchaseCost: purchaseAllocations[index].totalCost,
 
-        landedCost: landedAllocations[index].totalCost,
+        landedCost: roundMoney(
+          purchaseAllocations[index].totalCost +
+          additionalAllocations[index].totalCost
+        ),
 
         unitPurchaseCost: purchaseAllocations[index].unitCost,
 
-        unitLandedCost: landedAllocations[index].unitCost
+        unitLandedCost: roundMoney(
+          purchaseAllocations[index].unitCost +
+          additionalAllocations[index].unitCost
+        )
       };
     });
 
-    const currentTotalStock = Number(product.totalStock || 0);
+    const currentTotalStock = Number(
+      product.totalStock ??
+      product.stock ??
+      product.inventory?.totalStock ??
+      0
+    );
 
     if (
       !Number.isSafeInteger(currentTotalStock) ||
@@ -590,6 +718,12 @@ async function createProductLot(productId, payload = {}) {
 
       lotNumber,
 
+      lotName: input.lotName || lotNumber,
+
+      parentLotId: input.parentLotId || null,
+
+      parentLotNumber: input.parentLotNumber || null,
+
       supplier: input.supplier,
 
       purchaseDate: input.purchaseDate,
@@ -600,16 +734,20 @@ async function createProductLot(productId, payload = {}) {
 
       remainingQuantity: input.totalQuantity,
 
-      purchaseCost: input.purchaseCost,
+      purchaseCost: calculatedPurchaseCost,
 
-      landedCost: input.landedCost,
+      transportCost: input.transportCost,
+
+      otherCost: input.otherCost,
+
+      landedCost: calculatedLandedCost,
 
       unitPurchaseCost: roundMoney(
-        input.purchaseCost / input.totalQuantity
+        calculatedPurchaseCost / input.totalQuantity
       ),
 
       unitLandedCost: roundMoney(
-        input.landedCost / input.totalQuantity
+        calculatedLandedCost / input.totalQuantity
       ),
 
       note: input.note,
@@ -643,13 +781,14 @@ async function createProductLot(productId, payload = {}) {
       { merge: true }
     );
 
-    cachePlan.write(transaction);
+    cachePlan?.write(transaction);
 
     return {
       lot: lotDocument,
       product: {
         id,
         totalStock: newTotalStock,
+        variants: productVariants,
         version: updatedProduct.version
       }
     };
@@ -700,14 +839,16 @@ async function listProductLots(productId, options = {}) {
   const snapshot = await db
     .collection(LOTS_COLLECTION)
     .where('productId', '==', id)
-    .orderBy('purchaseDate', 'desc')
     .limit(limit)
     .get();
 
-  const lots = snapshot.docs.map(doc => ({
-    id: doc.id,
-    ...doc.data()
-  }));
+  const lots = snapshot.docs
+    .map(doc => ({ id: doc.id, ...doc.data() }))
+    .sort((left, right) => {
+      const a = left.purchaseDate?.toMillis?.() || left.purchaseDate?.getTime?.() || 0;
+      const b = right.purchaseDate?.toMillis?.() || right.purchaseDate?.getTime?.() || 0;
+      return b - a;
+    });
 
   return {
     lots,
@@ -736,11 +877,11 @@ async function getProductLotByNumber(productId, lotNumber) {
   const snapshot = await db
     .collection(LOTS_COLLECTION)
     .where('productId', '==', id)
-    .where('lotNumber', '==', number)
-    .limit(1)
     .get();
 
-  if (snapshot.empty) {
+  const doc = snapshot.docs.find(item => item.data()?.lotNumber === number);
+
+  if (!doc) {
     throw createError(
       'Product Lot not found.',
       404,
@@ -748,12 +889,60 @@ async function getProductLotByNumber(productId, lotNumber) {
     );
   }
 
-  const doc = snapshot.docs[0];
-
   return {
     id: doc.id,
     ...doc.data()
   };
+}
+
+async function getProductLotHistory(productId, lotId) {
+  const lot = await getProductLot(productId, lotId);
+  const snapshot = await db
+    .collection(ALLOCATIONS_COLLECTION)
+    .where('productId', '==', lot.productId)
+    .limit(500)
+    .get();
+
+  const history = [{
+    id: `${lot.id}-created`,
+    type: 'created',
+    description: `Stock added to ${lot.lotName || lot.lotNumber}.`,
+    quantity: lot.totalQuantity,
+    newQuantity: lot.totalQuantity,
+    cost: lot.landedCost,
+    performedBy: 'Admin',
+    createdAt: lot.createdAt || lot.purchaseDate
+  }];
+
+  for (const document of snapshot.docs) {
+    const allocation = document.data() || {};
+
+    for (const item of allocation.items || []) {
+      for (const line of item.allocations || []) {
+        if (line.lotId !== lot.id) continue;
+
+        history.push({
+          id: `${document.id}-${line.variantId}-${history.length}`,
+          type: allocation.status === 'restored' ? 'restored' : 'sold',
+          description: allocation.status === 'restored'
+            ? `Stock restored from Order ${allocation.orderId}.`
+            : `Stock allocated to Order ${allocation.orderId}.`,
+          quantity: Number(line.quantity || 0),
+          color: line.color || '',
+          size: line.size || '',
+          cost: Number(line.landedCost || 0),
+          performedBy: 'System',
+          createdAt: allocation.restoredAt || allocation.createdAt
+        });
+      }
+    }
+  }
+
+  return history.sort((left, right) => {
+    const a = left.createdAt?.toMillis?.() || left.createdAt?.getTime?.() || 0;
+    const b = right.createdAt?.toMillis?.() || right.createdAt?.getTime?.() || 0;
+    return b - a;
+  });
 }
 
 // ========================================
@@ -764,5 +953,6 @@ module.exports = {
   createProductLot,
   getProductLot,
   listProductLots,
-  getProductLotByNumber
+  getProductLotByNumber,
+  getProductLotHistory
 };

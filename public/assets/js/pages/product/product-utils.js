@@ -1,6 +1,8 @@
 
 'use strict';
 
+import { getIdToken } from '../../firebase-client.js';
+
 // ========================================
 // PRODUCT SHARED UTILITIES
 // Common helpers for Product modules
@@ -76,10 +78,21 @@ export function showProductMessage(
   element.setAttribute('role', 'status');
   element.textContent = text;
 
-  const root = getProductRoot();
+  const modal = document.querySelector(
+    '.product-modal-overlay.is-open:not([hidden]) .product-modal'
+  );
+  const root = modal || getProductRoot();
 
   if (root === document) {
     document.body.appendChild(element);
+  } else if (modal) {
+    const header = modal.querySelector('.product-modal-header');
+
+    if (header) {
+      header.after(element);
+    } else {
+      modal.prepend(element);
+    }
   } else {
     root.prepend(element);
   }
@@ -171,17 +184,40 @@ export async function productApiRequest(
   url,
   options = {}
 ) {
-  const response = await fetch(url, {
-    credentials: 'same-origin',
-    ...options,
-    headers: {
-      Accept: 'application/json',
-      ...(options.body ? {
-        'Content-Type': 'application/json'
-      } : {}),
-      ...(options.headers || {})
+  const authenticated = options.authenticated !== false;
+
+  async function send(forceRefresh = false) {
+    const token = authenticated
+      ? await getIdToken(forceRefresh)
+      : null;
+
+    if (authenticated && !token) {
+      throw new Error('Authentication required. Please login again.');
     }
-  });
+
+    return fetch(url, {
+      credentials: 'same-origin',
+      ...options,
+      headers: {
+        Accept: 'application/json',
+        ...(options.body ? {
+          'Content-Type': 'application/json'
+        } : {}),
+        ...(token ? {
+          Authorization: `Bearer ${token}`
+        } : {}),
+        ...(options.headers || {})
+      }
+    });
+  }
+
+  let response = await send(false);
+
+  // Firebase ID tokens are cached by the browser. Refresh once when the
+  // backend reports an expired token so users do not have to reload the page.
+  if (authenticated && response.status === 401) {
+    response = await send(true);
+  }
 
   const result = await parseProductResponse(response);
 

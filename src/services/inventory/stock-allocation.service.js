@@ -82,6 +82,17 @@ function parseQuantity(value, fieldName = 'Quantity') {
   return quantity;
 }
 
+function parseOptionalMoney(value, fieldName) {
+  if (value === undefined || value === null || value === '') return null;
+
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    throw createError(`${fieldName} must be a non-negative number.`);
+  }
+
+  return roundMoney(number);
+}
+
 function roundMoney(value) {
   return Math.round(
     (value + Number.EPSILON) * MONEY_PRECISION
@@ -151,10 +162,19 @@ function normalizeItems(items) {
       'Order item quantity'
     );
 
+    const unitSellingPrice = parseOptionalMoney(
+      item.unitSellingPrice ?? item.sellingPrice ?? item.unitPrice,
+      'Unit selling price'
+    );
+
     const existing = normalized.get(identifier);
 
     if (existing) {
       existing.quantity += quantity;
+
+      if (unitSellingPrice !== null) {
+        existing.unitSellingPrice = unitSellingPrice;
+      }
 
       if (!Number.isSafeInteger(existing.quantity)) {
         throw createError(
@@ -167,7 +187,8 @@ function normalizeItems(items) {
       normalized.set(identifier, {
         variantId,
         sku,
-        quantity
+        quantity,
+        unitSellingPrice
       });
     }
   }
@@ -396,12 +417,14 @@ async function allocateStock(payload = {}) {
 
     // Prepare catalog version update.
     // This read must also happen before any writes.
-    const cachePlan = await prepareProductChange({
-      db,
-      transaction,
-      productId,
-      action: 'stock_updated'
-    });
+    const cachePlan = product.active === true
+      ? await prepareProductChange({
+          db,
+          transaction,
+          productId,
+          action: 'updated'
+        })
+      : null;
 
     // ------------------------------------
     // PREPARE PRODUCT VARIANTS
@@ -477,7 +500,11 @@ async function allocateStock(payload = {}) {
       return {
         item,
         productVariant,
-        quantity: item.quantity
+        quantity: item.quantity,
+        unitSellingPrice: item.unitSellingPrice ?? parseOptionalMoney(
+          productVariant.sellingPrice ?? productVariant.price ?? product.sellingPrice,
+          'Product selling price'
+        ) ?? 0
       };
     });
 
@@ -587,7 +614,11 @@ async function allocateStock(payload = {}) {
           variantId: variantIdentifier,
           quantity: allocatedQuantity,
           unitLandedCost,
-          landedCost: allocatedLandedCost
+          landedCost: allocatedLandedCost,
+          unitSellingPrice: resolved.unitSellingPrice,
+          revenue: roundMoney(
+            resolved.unitSellingPrice * allocatedQuantity
+          )
         };
 
         variantAllocations.push(allocationLine);
@@ -624,6 +655,12 @@ async function allocateStock(payload = {}) {
           null,
 
         quantity: requiredQuantity,
+
+        unitSellingPrice: resolved.unitSellingPrice,
+
+        revenue: roundMoney(
+          resolved.unitSellingPrice * requiredQuantity
+        ),
 
         landedCost: itemLandedCost,
 
@@ -716,6 +753,13 @@ async function allocateStock(payload = {}) {
       )
     );
 
+    const totalRevenue = roundMoney(
+      allocationItems.reduce(
+        (total, item) => total + item.revenue,
+        0
+      )
+    );
+
     const allocationDocument = {
       orderId,
       productId,
@@ -725,6 +769,10 @@ async function allocateStock(payload = {}) {
       totalQuantity: totalRequestedQuantity,
 
       totalLandedCost,
+
+      totalRevenue,
+
+      grossProfit: roundMoney(totalRevenue - totalLandedCost),
 
       allocationMethod: 'FIFO',
 
@@ -750,7 +798,7 @@ async function allocateStock(payload = {}) {
       allocationDocument
     );
 
-    cachePlan.write(transaction);
+    cachePlan?.write(transaction);
 
     return {
       alreadyAllocated: false,

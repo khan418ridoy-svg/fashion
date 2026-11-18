@@ -313,12 +313,14 @@ async function restoreStock(payload = {}) {
     );
 
     // All required reads are completed before writes.
-    const cachePlan = await prepareProductChange({
-      db,
-      transaction,
-      productId,
-      action: 'stock_restored'
-    });
+    const cachePlan = product.active === true
+      ? await prepareProductChange({
+          db,
+          transaction,
+          productId,
+          action: 'updated'
+        })
+      : null;
 
     // ====================================
     // PREPARE LOT STATES
@@ -634,7 +636,7 @@ async function restoreStock(payload = {}) {
       restoredItems
     });
 
-    cachePlan.write(transaction);
+    cachePlan?.write(transaction);
 
     return {
       alreadyRestored: false,

@@ -10,7 +10,8 @@ import {
   getProductElement,
   showProductMessage,
   productApiRequest,
-  escapeProductHTML
+  escapeProductHTML,
+  setProductButtonLoading
 } from '../product-utils.js';
 
 
@@ -24,6 +25,14 @@ const CONFIG = {
   search: '#product-lot-search',
   statusFilter: '#product-lot-status-filter',
   refreshButton: '#product-lot-refresh',
+  editModal: '#lot-edit-modal',
+  editName: '#lot-edit-name',
+  editPurchaseCost: '#lot-edit-purchase-cost',
+  editTransportCost: '#lot-edit-transport-cost',
+  editOtherCost: '#lot-edit-other-cost',
+  editNote: '#lot-edit-note',
+  editCancel: '#lot-edit-cancel',
+  editSubmit: '#lot-edit-submit',
   emptyMessage: 'এই Product-এর কোনো Stock Lot পাওয়া যায়নি।'
 };
 
@@ -35,6 +44,8 @@ const CONFIG = {
 let initialized = false;
 let currentProductId = null;
 let lots = [];
+let editingLotId = null;
+let isSavingLot = false;
 
 
 // ========================================
@@ -46,7 +57,15 @@ function getElements() {
     container: getProductElement(CONFIG.container),
     search: getProductElement(CONFIG.search),
     statusFilter: getProductElement(CONFIG.statusFilter),
-    refreshButton: getProductElement(CONFIG.refreshButton)
+    refreshButton: getProductElement(CONFIG.refreshButton),
+    editModal: getProductElement(CONFIG.editModal),
+    editName: getProductElement(CONFIG.editName),
+    editPurchaseCost: getProductElement(CONFIG.editPurchaseCost),
+    editTransportCost: getProductElement(CONFIG.editTransportCost),
+    editOtherCost: getProductElement(CONFIG.editOtherCost),
+    editNote: getProductElement(CONFIG.editNote),
+    editCancel: getProductElement(CONFIG.editCancel),
+    editSubmit: getProductElement(CONFIG.editSubmit)
   };
 }
 
@@ -58,9 +77,9 @@ function getElements() {
 function normalizeLot(data = {}) {
   return {
     id: String(data.id || data.lotId || ''),
-    lotNumber: String(
-      data.lotNumber || data.lotCode || data.id || ''
-    ),
+    parentLotId: String(data.parentLotId || ''),
+    lotNumber: String(data.lotNumber || data.lotCode || data.id || ''),
+    lotName: String(data.lotName || data.lotNumber || data.id || ''),
     purchaseDate: data.purchaseDate || data.createdAt || null,
     supplier: String(data.supplier || ''),
     totalQuantity: Math.max(
@@ -71,6 +90,10 @@ function normalizeLot(data = {}) {
       0,
       Number(data.remainingQuantity ?? data.availableQuantity ?? 0)
     ),
+    purchaseCost: Math.max(0, Number(data.purchaseCost || 0)),
+    transportCost: Math.max(0, Number(data.transportCost || 0)),
+    otherCost: Math.max(0, Number(data.otherCost || 0)),
+    note: String(data.note || ''),
     status: String(data.status || 'active').toLowerCase(),
     createdAt: data.createdAt || null
   };
@@ -156,6 +179,7 @@ function getFilteredLots() {
   return lots.filter(lot => {
     const matchesSearch = [
       lot.id,
+      lot.lotName,
       lot.lotNumber,
       lot.supplier
     ].some(value =>
@@ -185,7 +209,10 @@ function createLotRow(lot) {
 
   row.innerHTML = `
     <td>
-      <strong>${escapeProductHTML(lot.lotNumber)}</strong>
+      <strong>${escapeProductHTML(lot.lotName)}</strong>
+      ${lot.lotNumber && lot.lotNumber !== lot.lotName
+        ? `<small>${escapeProductHTML(lot.lotNumber)}</small>`
+        : ''}
     </td>
 
     <td>
@@ -211,6 +238,15 @@ function createLotRow(lot) {
     </td>
 
     <td>
+      <button
+        type="button"
+        class="btn btn-sm btn-outline-primary"
+        data-lot-action="edit"
+        data-lot-id="${escapeProductHTML(lot.id)}"
+      >
+        Edit
+      </button>
+
       <button
         type="button"
         class="btn btn-sm btn-outline-primary"
@@ -328,13 +364,15 @@ export async function loadProductLots(productId) {
     }
   );
 
-  const data = result.data;
-
-  const lotList = Array.isArray(data)
-    ? data
-    : Array.isArray(data?.lots)
-      ? data.lots
-      : [];
+  const lotList = Array.isArray(result)
+    ? result
+    : Array.isArray(result?.lots)
+      ? result.lots
+      : Array.isArray(result?.data?.lots)
+        ? result.data.lots
+        : Array.isArray(result?.data)
+          ? result.data
+          : [];
 
   setProductLots(lotList);
 
@@ -367,19 +405,152 @@ export async function refreshProductLots(productId = currentProductId) {
 
 
 // ========================================
+// EDIT PURCHASE LOT
+// ========================================
+
+function inputMoney(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number >= 0
+    ? number.toFixed(2)
+    : '0.00';
+}
+
+function fillLotEditForm(lot = {}) {
+  const elements = getElements();
+
+  if (elements.editName) {
+    elements.editName.value = lot.lotName || lot.lotNumber || '';
+  }
+  if (elements.editPurchaseCost) {
+    elements.editPurchaseCost.value = inputMoney(lot.purchaseCost);
+  }
+  if (elements.editTransportCost) {
+    elements.editTransportCost.value = inputMoney(lot.transportCost);
+  }
+  if (elements.editOtherCost) {
+    elements.editOtherCost.value = inputMoney(lot.otherCost);
+  }
+  if (elements.editNote) {
+    elements.editNote.value = lot.note || '';
+  }
+}
+
+function closeLotEdit() {
+  const { editModal } = getElements();
+
+  if (!editModal) return;
+
+  editModal.classList.remove('is-open');
+  editModal.hidden = true;
+  editModal.setAttribute('aria-hidden', 'true');
+  editModal.querySelector('#product-global-message')?.remove();
+  editingLotId = null;
+}
+
+async function openLotEdit(lot) {
+  const elements = getElements();
+
+  if (!elements.editModal || !lot?.id) return false;
+
+  editingLotId = lot.parentLotId || lot.id;
+  fillLotEditForm(lot);
+  elements.editModal.querySelector('#product-global-message')?.remove();
+  elements.editModal.hidden = false;
+  elements.editModal.classList.add('is-open');
+  elements.editModal.setAttribute('aria-hidden', 'false');
+
+  window.setTimeout(() => elements.editName?.focus(), 0);
+
+  if (lot.parentLotId) {
+    try {
+      const result = await productApiRequest(
+        `/api/lots/${encodeURIComponent(editingLotId)}`,
+        { method: 'GET' }
+      );
+
+      if (editingLotId === (lot.parentLotId || lot.id)) {
+        fillLotEditForm(result.lot || result.data?.lot || result.data || lot);
+      }
+    } catch (error) {
+      console.warn('[LOT EDIT DETAILS]', error);
+    }
+  }
+
+  return true;
+}
+
+async function saveLotEdit() {
+  if (isSavingLot || !editingLotId) return false;
+
+  const elements = getElements();
+  const lotName = elements.editName?.value.trim() || '';
+  const transportCost = Number(elements.editTransportCost?.value || 0);
+  const otherCost = Number(elements.editOtherCost?.value || 0);
+
+  if (!lotName || lotName.length > 100) {
+    showProductMessage('Enter a Lot Name within 100 characters.', 'warning');
+    elements.editName?.focus();
+    return false;
+  }
+
+  if (
+    !Number.isFinite(transportCost) || transportCost < 0 ||
+    !Number.isFinite(otherCost) || otherCost < 0
+  ) {
+    showProductMessage('Lot costs must be valid non-negative numbers.', 'warning');
+    return false;
+  }
+
+  isSavingLot = true;
+  setProductButtonLoading(elements.editSubmit, true, 'Saving Lot...');
+
+  try {
+    await productApiRequest(
+      `/api/lots/${encodeURIComponent(editingLotId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          lotName,
+          transportCost,
+          otherCost,
+          note: elements.editNote?.value.trim() || ''
+        })
+      }
+    );
+
+    closeLotEdit();
+    await refreshProductLots(currentProductId);
+    showProductMessage('Purchase Lot updated successfully.', 'success');
+    return true;
+  } catch (error) {
+    console.error('[LOT EDIT]', error);
+    showProductMessage(error.message || 'Unable to update the Purchase Lot.', 'error');
+    return false;
+  } finally {
+    isSavingLot = false;
+    setProductButtonLoading(elements.editSubmit, false);
+  }
+}
+
+
+// ========================================
 // OPEN LOT HISTORY
 // ========================================
 
 function handleLotAction(event) {
-  const button = event.target.closest(
-    '[data-lot-action="history"]'
-  );
+  const button = event.target.closest('[data-lot-action]');
 
   if (!button) return;
 
   const lotId = button.dataset.lotId;
 
   if (!lotId || !currentProductId) return;
+
+  if (button.dataset.lotAction === 'edit') {
+    const lot = lots.find(item => item.id === lotId);
+    if (lot) void openLotEdit(lot);
+    return;
+  }
 
   document.dispatchEvent(
     new CustomEvent('product:lot-history', {
@@ -414,6 +585,12 @@ function bindEvents() {
     'click',
     handleLotAction
   );
+
+  elements.editCancel?.addEventListener('click', closeLotEdit);
+  elements.editSubmit?.addEventListener('click', saveLotEdit);
+  elements.editModal?.addEventListener('click', event => {
+    if (event.target === elements.editModal) closeLotEdit();
+  });
 }
 
 
@@ -424,8 +601,12 @@ function bindEvents() {
 export function resetProductLots() {
   lots = [];
   currentProductId = null;
+  editingLotId = null;
+  isSavingLot = false;
 
   const elements = getElements();
+
+  closeLotEdit();
 
   if (elements.search) elements.search.value = '';
 
