@@ -741,7 +741,7 @@ function initializeApplication() {
   app.replaceChildren(
     createElement('div', {
       className: 'app-loading',
-      text: 'Loading application...'
+      text: 'Loading Nishat Fashion...'
     })
   );
 

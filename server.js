@@ -193,12 +193,17 @@ app.get('/health', (req, res) => {
 // ========================================
 // API Routes
 // ========================================
-
 const authRoutes = require('./src/routes/auth.routes');
 const taxonomyRoutes = require('./src/routes/taxonomy.routes');
+const productRoutes = require('./src/routes/product.routes');
+const productLotRoutes = require('./src/routes/product-lot.routes');
+const aiRoutes = require('./src/routes/ai.routes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/taxonomy', taxonomyRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/products', productLotRoutes);
+app.use('/api/ai', aiRoutes);
 
 // ========================================
 // API Not Found
