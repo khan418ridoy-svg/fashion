@@ -22,6 +22,12 @@ const {
 } = require('./product-sku.service');
 
 const {
+  prepareGeneratedBarcode,
+  prepareCustomBarcode,
+  prepareBarcodeRelease
+} = require('./product-barcode.service');
+
+const {
   prepareUniqueSlug,
   prepareSlugRelease
 } = require('./product-slug.service');
@@ -31,6 +37,12 @@ const {
   prepareProductChanges,
   getCatalogMeta
 } = require('./product-cache.service');
+
+const {
+  prepareProductPrivateContext,
+  hydrateProductWithPrivateData,
+  hydrateProductsWithPrivateData
+} = require('./product-private.service');
 
 // --------------------------------------------------
 // Configuration
@@ -300,6 +312,19 @@ async function createProduct(payload = {}) {
       });
     }
 
+    const barcodePlan = product.barcode
+      ? await prepareCustomBarcode({
+          db,
+          transaction,
+          productId: productRef.id,
+          barcode: product.barcode
+        })
+      : await prepareGeneratedBarcode({
+          db,
+          transaction,
+          productId: productRef.id
+        });
+
     const slugPlan = await prepareUniqueSlug({
       db,
       transaction,
@@ -307,26 +332,14 @@ async function createProduct(payload = {}) {
       requestedSlug: product.slug
     });
 
-    const cachePlan = product.active
-      ? await prepareProductChange({
-          db,
-          transaction,
-          productId: productRef.id,
-          action: 'created'
-        })
-      : null;
-
-    // ======================================
-    // WRITE PHASE
-    // ======================================
-
     const now = new Date();
 
-    const document = {
+    const fullDocument = {
       ...product,
 
       id: productRef.id,
       sku: skuPlan.sku,
+      barcode: barcodePlan.barcode,
       slug: slugPlan.slug,
 
       seo: {
@@ -349,17 +362,39 @@ async function createProduct(payload = {}) {
       updatedAt: now
     };
 
-    transaction.create(productRef, document);
+    const privateContext = await prepareProductPrivateContext({
+      db,
+      transaction,
+      productId: productRef.id
+    });
+    const privatePlan = privateContext.prepare(fullDocument);
+
+    const cachePlan = product.active
+      ? await prepareProductChange({
+          db,
+          transaction,
+          productId: productRef.id,
+          action: 'created'
+        })
+      : null;
+
+    // ======================================
+    // WRITE PHASE
+    // ======================================
+
+    transaction.create(
+      productRef,
+      privatePlan.publicProduct
+    );
 
     skuPlan.write(transaction);
+    barcodePlan.write(transaction);
     slugPlan.write(transaction);
+    privatePlan.write(transaction);
 
     cachePlan?.write(transaction);
 
-    return {
-      id: productRef.id,
-      ...document
-    };
+    return privatePlan.hydratedProduct;
   });
 }
 
@@ -376,10 +411,12 @@ async function getProduct(productId) {
     throw createNotFoundError();
   }
 
-  return {
+  const product = {
     id: snapshot.id,
     ...snapshot.data()
   };
+
+  return hydrateProductWithPrivateData(db, product);
 }
 
 // --------------------------------------------------
@@ -419,10 +456,10 @@ async function getProductBySku(sku) {
     return null;
   }
 
-  return {
+  return hydrateProductWithPrivateData(db, {
     id: snapshot.id,
     ...product
-  };
+  });
 }
 
 // --------------------------------------------------
@@ -502,10 +539,15 @@ async function listProducts(options = {}) {
 
   const docs = snapshot.docs.slice(0, limit);
 
-  const products = docs.map((doc) => ({
+  const publicProducts = docs.map((doc) => ({
     id: doc.id,
     ...doc.data()
   }));
+
+  const products = await hydrateProductsWithPrivateData(
+    db,
+    publicProducts
+  );
 
   const lastProduct = products.length
     ? products[products.length - 1]
@@ -561,13 +603,28 @@ async function updateProduct(productId, payload = {}) {
       );
     }
 
+    const privateContext = await prepareProductPrivateContext({
+      db,
+      transaction,
+      productId: id,
+      privateId: existing.privateId || ''
+    });
+
     const oldSku = validateSku(existing.sku);
+    const oldBarcode = cleanString(existing.barcode, 100);
 
     const requestedSku = payload.sku === undefined ||
       payload.sku === null ||
       payload.sku === ''
       ? oldSku
       : validateSku(payload.sku);
+
+    const requestedBarcode = Object.prototype.hasOwnProperty.call(
+      payload,
+      'barcode'
+    )
+      ? cleanString(payload.barcode, 100)
+      : oldBarcode;
 
     // Preserve server-controlled fields.
     const safePayload = { ...payload };
@@ -579,6 +636,7 @@ async function updateProduct(productId, payload = {}) {
     delete safePayload.deleted;
     delete safePayload.deletedAt;
     delete safePayload.totalStock;
+    delete safePayload.privateId;
 
     const merged = {
       ...existing,
@@ -591,6 +649,7 @@ async function updateProduct(productId, payload = {}) {
     const updatedProduct = normalizeNewProduct(merged);
 
     updatedProduct.sku = requestedSku;
+    updatedProduct.barcode = requestedBarcode;
     updatedProduct.variants = normalizeInventoryVariants(
       updatedProduct.variants,
       requestedSku,
@@ -616,6 +675,34 @@ async function updateProduct(productId, payload = {}) {
         transaction,
         productId: id,
         sku: requestedSku
+      });
+    }
+
+    const barcodeChanged = oldBarcode !== requestedBarcode;
+    let barcodeReleasePlan = null;
+    let barcodeClaimPlan = null;
+
+    if (barcodeChanged && oldBarcode) {
+      barcodeReleasePlan = await prepareBarcodeRelease({
+        db,
+        transaction,
+        productId: id,
+        barcode: oldBarcode
+      });
+    }
+
+    if (!requestedBarcode) {
+      barcodeClaimPlan = await prepareGeneratedBarcode({
+        db,
+        transaction,
+        productId: id
+      });
+    } else if (barcodeChanged) {
+      barcodeClaimPlan = await prepareCustomBarcode({
+        db,
+        transaction,
+        productId: id,
+        barcode: requestedBarcode
       });
     }
 
@@ -651,10 +738,11 @@ async function updateProduct(productId, payload = {}) {
 
     const now = new Date();
 
-    const document = {
+    const fullDocument = {
       ...updatedProduct,
 
       id,
+      barcode: barcodeClaimPlan?.barcode || requestedBarcode,
       slug: slugPlan.slug,
 
       seo: {
@@ -670,18 +758,27 @@ async function updateProduct(productId, payload = {}) {
       updatedAt: now
     };
 
-    transaction.set(productRef, document);
+    const privatePlan = privateContext.prepare(fullDocument);
+
+    transaction.set(
+      productRef,
+      privatePlan.publicProduct
+    );
 
     if (skuChanged) {
       releasePlan.write(transaction);
       claimPlan.write(transaction);
     }
 
+    barcodeReleasePlan?.write(transaction);
+    barcodeClaimPlan?.write(transaction);
+
     slugPlan.write(transaction);
+    privatePlan.write(transaction);
 
     cachePlan?.write(transaction);
 
-    return document;
+    return privatePlan.hydratedProduct;
   });
 }
 
@@ -915,20 +1012,42 @@ async function updateProductCosts(productId, payload = {}) {
   };
 
   const productRef = getProductRef(id);
-  const snapshot = await productRef.get();
-  if (!snapshot.exists || snapshot.data()?.deleted === true) {
-    throw createNotFoundError();
-  }
 
-  await productRef.set({
-    cost,
-    buyPrice,
-    supplier: cost.supplier,
-    purchaseNote: cost.purchaseNote,
-    updatedAt: new Date()
-  }, { merge: true });
+  return db.runTransaction(async transaction => {
+    const snapshot = await transaction.get(productRef);
 
-  return cost;
+    if (!snapshot.exists || snapshot.data()?.deleted === true) {
+      throw createNotFoundError();
+    }
+
+    const publicProduct = {
+      id,
+      ...(snapshot.data() || {})
+    };
+    const privateContext = await prepareProductPrivateContext({
+      db,
+      transaction,
+      productId: id,
+      privateId: publicProduct.privateId || ''
+    });
+    const fullProduct = {
+      ...privateContext.hydrate(publicProduct),
+      cost,
+      buyPrice,
+      supplier: cost.supplier,
+      purchaseNote: cost.purchaseNote,
+      updatedAt: new Date()
+    };
+    const privatePlan = privateContext.prepare(fullProduct);
+
+    transaction.set(
+      productRef,
+      privatePlan.publicProduct
+    );
+    privatePlan.write(transaction);
+
+    return cost;
+  });
 }
 
 // --------------------------------------------------

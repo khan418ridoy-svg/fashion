@@ -14,6 +14,7 @@ import {
   getProductDetails,
   getProductLots
 } from './product-data.js';
+import { renderProductBarcode } from './product-barcode.js';
 
 // ========================================
 // SMALL HTML BUILDERS
@@ -257,7 +258,10 @@ function renderBasicInfo(details) {
     <dl class="product-view-details">
       ${detailRow('SKU', details.sku)}
       ${detailRow('Product Code', details.productCode)}
-      ${detailRow('Barcode', details.barcode)}
+      <div class="product-view-barcode-detail">
+        <dt>Barcode</dt>
+        <dd>${renderProductBarcode(details.barcode)}</dd>
+      </div>
       ${detailRow('Brand', details.brand)}
       ${detailRow('Collection', details.collection)}
       ${detailRow('Category', details.category)}

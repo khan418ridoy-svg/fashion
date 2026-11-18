@@ -12,6 +12,10 @@ const {
   prepareProductChange
 } = require('../product/product-cache.service');
 
+const {
+  prepareProductPrivateContext
+} = require('../product/product-private.service');
+
 // ========================================
 // Configuration
 // ========================================
@@ -503,15 +507,23 @@ async function createProductLot(productId, payload = {}) {
 
     const counterSnapshot = await transaction.get(counterRef);
 
-    const product = productSnapshot.data() || {};
+    const publicProduct = productSnapshot.data() || {};
 
-    if (product.deleted === true) {
+    if (publicProduct.deleted === true) {
       throw createError(
         'Cannot add stock to a deleted Product.',
         409,
         'PRODUCT_DELETED'
       );
     }
+
+    const privateContext = await prepareProductPrivateContext({
+      db,
+      transaction,
+      productId: id,
+      privateId: publicProduct.privateId || ''
+    });
+    const product = privateContext.hydrate(publicProduct);
 
     const productVariants = (
       Array.isArray(product.variants) && product.variants.length > 0
@@ -729,12 +741,16 @@ async function createProductLot(productId, payload = {}) {
 
     const newTotalStock = currentTotalStock + addedQuantity;
 
-    const updatedProduct = {
+    const fullUpdatedProduct = {
+      ...product,
       totalStock: newTotalStock,
       variants: productVariants,
       version: Number(product.version || 0) + 1,
       updatedAt: now
     };
+    const privatePlan = privateContext.prepare(
+      fullUpdatedProduct
+    );
 
     // ------------------------------------
     // LOT DOCUMENT
@@ -797,8 +813,7 @@ async function createProductLot(productId, payload = {}) {
 
     transaction.set(
       productRef,
-      updatedProduct,
-      { merge: true }
+      privatePlan.publicProduct
     );
 
     transaction.set(
@@ -810,6 +825,7 @@ async function createProductLot(productId, payload = {}) {
       { merge: true }
     );
 
+    privatePlan.write(transaction);
     cachePlan?.write(transaction);
 
     return {
@@ -818,7 +834,7 @@ async function createProductLot(productId, payload = {}) {
         id,
         totalStock: newTotalStock,
         variants: productVariants,
-        version: updatedProduct.version
+        version: fullUpdatedProduct.version
       }
     };
   });

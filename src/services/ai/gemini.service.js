@@ -1,4 +1,3 @@
-
 'use strict';
 
 require('dotenv').config();
@@ -29,6 +28,28 @@ const MODEL_CACHE_TTL = Math.max(
   Number(process.env.GEMINI_MODEL_CACHE_TTL || 21600000)
 );
 
+// Health check settings
+const HEALTH_CHECK_MAX_MODELS = Math.max(
+  1,
+  Number(process.env.GEMINI_HEALTH_MAX_MODELS || 8)
+);
+
+const HEALTH_CHECK_PROMPT =
+  'Reply with exactly: OK';
+
+const HEALTH_CHECK_MODEL_PRIORITY = [
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.7-flash',
+  'gemini-3.1-pro-preview',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-latest',
+  'gemini-flash-lite-latest'
+];
+
 // ======================================================
 // MODEL CACHE
 // ======================================================
@@ -39,6 +60,14 @@ let modelCache = {
 };
 
 let modelDiscoveryPromise = null;
+
+// Models that returned 404 are temporarily skipped.
+const unavailableModels = new Map();
+
+const UNAVAILABLE_MODEL_TTL = Math.max(
+  60000,
+  Number(process.env.GEMINI_UNAVAILABLE_MODEL_TTL || 21600000)
+);
 
 // ======================================================
 // USAGE STATISTICS
@@ -112,6 +141,7 @@ function getConfiguredModels() {
         .filter(Boolean)
         .map(normalizeModelName)
         .filter(Boolean)
+        .filter(isTextGenerationModel)
     )
   ];
 }
@@ -186,12 +216,85 @@ function normalizeModelName(name) {
 }
 
 // ======================================================
+// MODEL TEXT ELIGIBILITY
+// ======================================================
+
+function isTextGenerationModel(model) {
+  const name = normalizeModelName(
+    typeof model === 'string' ? model : model?.name
+  );
+
+  if (!name) {
+    return false;
+  }
+
+  // Explicitly exclude audio/TTS-only models.
+  if (
+    /(?:^|[-_])tts(?:$|[-_])/i.test(name) ||
+    /text-to-speech|speech-generation/i.test(name)
+  ) {
+    return false;
+  }
+
+  if (typeof model === 'object' && model) {
+    const outputModalities =
+      model.outputModalities ||
+      model.supportedOutputModalities ||
+      model.responseModalities;
+
+    // If metadata explicitly declares output modalities,
+    // TEXT must be included.
+    if (Array.isArray(outputModalities) && outputModalities.length) {
+      const supportsText = outputModalities.some(
+        modality => String(modality).toUpperCase() === 'TEXT'
+      );
+
+      if (!supportsText) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+// ======================================================
+// UNAVAILABLE MODEL CACHE
+// ======================================================
+
+function isModelUnavailable(model) {
+  const expiry = unavailableModels.get(model);
+
+  if (!expiry) {
+    return false;
+  }
+
+  if (Date.now() >= expiry) {
+    unavailableModels.delete(model);
+    return false;
+  }
+
+  return true;
+}
+
+function markModelUnavailable(model) {
+  unavailableModels.set(
+    model,
+    Date.now() + UNAVAILABLE_MODEL_TTL
+  );
+}
+
+function clearUnavailableModel(model) {
+  unavailableModels.delete(model);
+}
+
+// ======================================================
 // MODEL DISCOVERY
 // ======================================================
 
 async function fetchAvailableModels(apiKey, timeout) {
   let pageToken = '';
-  const discovered = new Set();
+  const discovered = new Map();
 
   for (let page = 0; page < 100; page++) {
     const url = new URL(API_BASE_URL);
@@ -247,8 +350,12 @@ async function fetchAvailableModels(apiKey, timeout) {
         ? item.supportedGenerationMethods
         : [];
 
-      if (name && methods.includes('generateContent')) {
-        discovered.add(name);
+      if (
+        name &&
+        methods.includes('generateContent') &&
+        isTextGenerationModel(item)
+      ) {
+        discovered.set(name, item);
       }
     }
 
@@ -259,7 +366,7 @@ async function fetchAvailableModels(apiKey, timeout) {
     }
   }
 
-  return [...discovered];
+  return [...discovered.keys()];
 }
 
 // ======================================================
@@ -296,7 +403,7 @@ async function discoverModels(options = {}) {
     const discovered = new Set();
     const discoveryErrors = [];
 
-    // Discover models using EVERY API key.
+    // Discover models using every API key.
     for (let i = 0; i < apiKeys.length; i++) {
       try {
         console.log('[Gemini Models] Discovering:', {
@@ -332,13 +439,13 @@ async function discoverModels(options = {}) {
       }
     }
 
-    // Configured models are always prioritized.
+    // Configured models are prioritized, but TTS models are excluded.
     const combined = [
       ...new Set([
         ...configuredModels,
         ...discovered
       ])
-    ];
+    ].filter(isTextGenerationModel);
 
     if (combined.length) {
       modelCache = {
@@ -527,6 +634,30 @@ async function callGemini({
 }
 
 // ======================================================
+// USAGE TRACKING HELPERS
+// ======================================================
+
+function recordSuccessfulUsage(result) {
+  usage.successfulRequests++;
+  usage.lastModel = result.model;
+  usage.lastSuccessAt = new Date().toISOString();
+  usage.lastError = null;
+
+  if (result.usage) {
+    usage.totalInputTokens +=
+      Number(result.usage.promptTokenCount || 0);
+
+    usage.totalOutputTokens +=
+      Number(result.usage.candidatesTokenCount || 0);
+  }
+}
+
+function recordFailedUsage(error) {
+  usage.failedRequests++;
+  usage.lastError = error?.message || String(error);
+}
+
+// ======================================================
 // FALLBACK SERVICE
 // ======================================================
 
@@ -582,11 +713,27 @@ async function generateText(options = {}) {
   usage.totalRequests++;
 
   const errors = [];
-  const totalAttempts = models.length * apiKeys.length;
   let attemptNumber = 0;
 
+  const activeModels = models.filter(
+    model => !isModelUnavailable(model)
+  );
+
+  if (!activeModels.length) {
+    throw new GeminiError(
+      'All discovered Gemini models are temporarily marked unavailable.',
+      {
+        details: {
+          unavailableModels: models
+        }
+      }
+    );
+  }
+
+  const totalAttempts = activeModels.length * apiKeys.length;
+
   // Model priority first, then API key fallback.
-  for (const model of models) {
+  for (const model of activeModels) {
     for (let keyIndex = 0; keyIndex < apiKeys.length; keyIndex++) {
       attemptNumber++;
 
@@ -611,18 +758,8 @@ async function generateText(options = {}) {
           timeout
         });
 
-        usage.successfulRequests++;
-        usage.lastModel = model;
-        usage.lastSuccessAt = new Date().toISOString();
-        usage.lastError = null;
-
-        if (result.usage) {
-          usage.totalInputTokens +=
-            Number(result.usage.promptTokenCount || 0);
-
-          usage.totalOutputTokens +=
-            Number(result.usage.candidatesTokenCount || 0);
-        }
+        clearUnavailableModel(model);
+        recordSuccessfulUsage(result);
 
         console.log('[Gemini SUCCESS]', {
           model,
@@ -641,6 +778,12 @@ async function generateText(options = {}) {
           error instanceof GeminiError
             ? error
             : new GeminiError(error.message);
+
+        // A 404 means this model is not available to this API.
+        // Cache it to avoid repeatedly trying it.
+        if (geminiError.status === 404) {
+          markModelUnavailable(model);
+        }
 
         const errorInfo = {
           attempt: attemptNumber,
@@ -664,14 +807,16 @@ async function generateText(options = {}) {
     }
   }
 
-  usage.failedRequests++;
-
-  throw new GeminiError(
+  const finalError = new GeminiError(
     'All discovered Gemini models and API keys failed.',
     {
       details: errors
     }
   );
+
+  recordFailedUsage(finalError);
+
+  throw finalError;
 }
 
 // ======================================================
@@ -688,32 +833,194 @@ async function generate(prompt, options = {}) {
 }
 
 // ======================================================
-// HEALTH CHECK
+// HEALTH CHECK MODEL ORDER
 // ======================================================
 
-async function healthCheck() {
-  try {
-    const result = await generateText({
-      prompt: 'Reply with exactly: OK',
-      temperature: 0,
-      maxOutputTokens: 64
-    });
+function getHealthCheckModels(discoveredModels) {
+  const configuredPriority = (process.env.GEMINI_HEALTH_CHECK_MODELS || '')
+    .split(',')
+    .map(model => model.trim())
+    .filter(Boolean)
+    .map(normalizeModelName)
+    .filter(isTextGenerationModel);
 
+  const priority = [
+    ...configuredPriority,
+    ...HEALTH_CHECK_MODEL_PRIORITY
+  ];
+
+  const priorityModels = priority.filter(
+    model => discoveredModels.includes(model)
+  );
+
+  const remainingModels = discoveredModels.filter(
+    model => !priorityModels.includes(model)
+  );
+
+  const ordered = [
+    ...new Set([
+      ...priorityModels,
+      ...remainingModels
+    ])
+  ].filter(model => !isModelUnavailable(model));
+
+  return ordered.slice(0, HEALTH_CHECK_MAX_MODELS);
+}
+
+// ======================================================
+// HEALTH CHECK
+// ======================================================
+// Dedicated test. Does NOT use generateText() fallback.
+// Tests a limited number of eligible text models in priority
+// order, with key fallback for each model.
+// Stops after the first successful text response.
+
+async function healthCheck(options = {}) {
+  const startedAt = Date.now();
+
+  const apiKeys = getApiKeys();
+
+  if (!apiKeys.length) {
     return {
-      success: true,
-      model: result.model,
-      response: result.text,
-      httpStatus: result.httpStatus,
-      finishReason: result.finishReason
+      success: false,
+      error: 'No Gemini API keys configured.',
+      attempts: [],
+      durationMs: Date.now() - startedAt
     };
+  }
+
+  const timeout =
+    options.timeout ??
+    Number(process.env.GEMINI_TIMEOUT || DEFAULT_TIMEOUT);
+
+  let models;
+
+  try {
+    const discoveredModels = await discoverModels({ timeout });
+    models = getHealthCheckModels(discoveredModels);
 
   } catch (error) {
     return {
       success: false,
       error: error.message,
-      details: error.details || null
+      details: error.details || null,
+      attempts: [],
+      durationMs: Date.now() - startedAt
     };
   }
+
+  if (!models.length) {
+    return {
+      success: false,
+      error: 'No eligible text-generation models available for Health Check.',
+      attempts: [],
+      durationMs: Date.now() - startedAt
+    };
+  }
+
+  const attempts = [];
+
+  usage.totalRequests++;
+
+  for (const model of models) {
+    for (let keyIndex = 0; keyIndex < apiKeys.length; keyIndex++) {
+      const apiKey = apiKeys[keyIndex];
+      const attemptStartedAt = Date.now();
+
+      try {
+        console.log('[Gemini Health Check Attempt]', {
+          model,
+          keyNumber: keyIndex + 1
+        });
+
+        const result = await callGemini({
+          apiKey,
+          model,
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: HEALTH_CHECK_PROMPT }]
+            }
+          ],
+          systemInstruction: null,
+          temperature: 0,
+          maxOutputTokens: 64,
+          timeout
+        });
+
+        clearUnavailableModel(model);
+
+        const attempt = {
+          model,
+          keyNumber: keyIndex + 1,
+          success: true,
+          httpStatus: result.httpStatus,
+          durationMs: Date.now() - attemptStartedAt,
+          response: result.text,
+          finishReason: result.finishReason,
+          error: null
+        };
+
+        attempts.push(attempt);
+        recordSuccessfulUsage(result);
+
+        return {
+          success: true,
+          model: result.model,
+          keyNumber: keyIndex + 1,
+          response: result.text,
+          httpStatus: result.httpStatus,
+          finishReason: result.finishReason,
+          attempts,
+          durationMs: Date.now() - startedAt
+        };
+
+      } catch (error) {
+        usage.fallbackAttempts++;
+
+        const geminiError =
+          error instanceof GeminiError
+            ? error
+            : new GeminiError(error.message);
+
+        if (geminiError.status === 404) {
+          markModelUnavailable(model);
+        }
+
+        const attempt = {
+          model,
+          keyNumber: keyIndex + 1,
+          success: false,
+          httpStatus: geminiError.status || 0,
+          durationMs: Date.now() - attemptStartedAt,
+          response: '',
+          finishReason: geminiError.finishReason || '',
+          error: geminiError.message
+        };
+
+        attempts.push(attempt);
+        usage.lastError = geminiError.message;
+
+        console.error('[Gemini Health Check Failed]', attempt);
+      }
+    }
+  }
+
+  const finalError = new GeminiError(
+    'Health Check failed: all selected text models and API keys were unsuccessful.',
+    {
+      details: attempts
+    }
+  );
+
+  recordFailedUsage(finalError);
+
+  return {
+    success: false,
+    error: finalError.message,
+    attempts,
+    durationMs: Date.now() - startedAt
+  };
 }
 
 // ======================================================

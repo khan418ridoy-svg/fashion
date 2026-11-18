@@ -131,6 +131,39 @@
   opacity: 0.6;
 }
 
+.product-view-barcode-detail dd {
+  margin-top: 8px;
+}
+
+.product-view-barcode {
+  width: min(100%, 360px);
+  padding: 10px 12px 8px;
+  border: 1px solid #dbe2ea;
+  border-radius: 8px;
+  background: #fff;
+  color: #111827;
+  text-align: center;
+}
+
+.product-view-barcode svg {
+  display: block;
+  width: 100%;
+  height: 64px;
+  fill: #050505;
+}
+
+.product-view-barcode-number {
+  display: block;
+  margin-top: 6px;
+  color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
 .product-view-lot-list {
   display: grid;
   gap: 14px;

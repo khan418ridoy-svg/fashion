@@ -1154,6 +1154,7 @@ export async function saveProductForm({
     const title = activeContainer?.querySelector('#product-form-title');
     const skuInput = activeContainer?.querySelector('#product-sku');
     const codeInput = activeContainer?.querySelector('#product-code');
+    const barcodeInput = activeContainer?.querySelector('#product-barcode');
     const slugInput = activeContainer?.querySelector('#product-slug');
     const savedSlug = savedProduct?.slug || savedProduct?.seo?.slug;
 
@@ -1163,6 +1164,9 @@ export async function saveProductForm({
     if (skuInput && savedProduct?.sku) skuInput.value = savedProduct.sku;
     if (codeInput && savedProduct?.productCode) {
       codeInput.value = savedProduct.productCode;
+    }
+    if (barcodeInput && savedProduct?.barcode) {
+      barcodeInput.value = savedProduct.barcode;
     }
     if (slugInput && savedSlug) {
       slugInput.value = savedSlug;

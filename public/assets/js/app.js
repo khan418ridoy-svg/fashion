@@ -41,6 +41,11 @@ window.APP_CONFIG = APP_CONFIG;
 const PAGE_TITLES = {
   dashboard: 'Dashboard',
   products: 'Products',
+  orders: 'Orders',
+  pos: 'POS',
+  reports: 'Reports',
+  botChats: 'Bot Chats',
+  facebook: 'Facebook',
   lots: 'Purchase Lots',
   coupons: 'Coupons',
   collections: 'Collections',
@@ -245,6 +250,61 @@ function renderAdminLayout(admin) {
     }
   });
 
+  const ordersLink = createElement('a', {
+    className: 'sidebar-link',
+    text: '☷ Orders',
+    attributes: {
+      href: '#orders'
+    },
+    dataset: {
+      page: 'orders'
+    }
+  });
+
+  const posLink = createElement('a', {
+    className: 'sidebar-link',
+    text: '▣ POS',
+    attributes: {
+      href: '#pos'
+    },
+    dataset: {
+      page: 'pos'
+    }
+  });
+
+  const botChatsLink = createElement('a', {
+    className: 'sidebar-link',
+    text: '◌ Bot Chats',
+    attributes: {
+      href: '#botChats'
+    },
+    dataset: {
+      page: 'botChats'
+    }
+  });
+
+  const facebookLink = createElement('a', {
+    className: 'sidebar-link',
+    text: '◉ Facebook',
+    attributes: {
+      href: '#facebook'
+    },
+    dataset: {
+      page: 'facebook'
+    }
+  });
+
+  const reportsLink = createElement('a', {
+    className: 'sidebar-link',
+    text: '▤ Reports',
+    attributes: {
+      href: '#reports'
+    },
+    dataset: {
+      page: 'reports'
+    }
+  });
+
   // ======================================
   // Products Link
   // ======================================
@@ -390,6 +450,11 @@ const lotsLink = createElement('a', {
 
   navigation.append(
     dashboardLink,
+    ordersLink,
+    posLink,
+    botChatsLink,
+    facebookLink,
+    reportsLink,
     productsLink,
     lotsLink,
     couponsLink,
