@@ -898,7 +898,10 @@ export function renderProductForm(options = {}) {
   if (mount) {
     mount.appendChild(
       renderProductBasic(
-        options.product?.basic || options.product || {}
+        {
+          ...(options.product || {}),
+          ...(options.product?.basic || {})
+        }
       )
     );
   }
@@ -1306,6 +1309,7 @@ export function getProductFormData() {
       name: getProductElement('#product-name')?.value?.trim() || '',
       brand: getProductElement('#product-brand')?.value?.trim() || '',
       productCode: getProductElement('#product-code')?.value?.trim() || '',
+      barcode: getProductElement('#product-barcode')?.value?.trim() || '',
       sku: getProductElement('#product-sku')?.value?.trim() || '',
       slug: getProductElement('#product-slug')?.value?.trim() || ''
     },
@@ -1342,6 +1346,7 @@ export function getProductSavePayload() {
     name: data.basic.name,
     brand: data.basic.brand,
     productCode: data.basic.productCode,
+    barcode: data.basic.barcode,
     sku: data.basic.sku,
     slug: seo.slug || data.basic.slug,
 

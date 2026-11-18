@@ -263,7 +263,7 @@ async function openProductView(product) {
   viewProductId = productId;
 
   // আগে modal খুলে দিই, lots পরে load হয়ে আসবে
-  const opened = openViewModal(pageRoot, product, {
+  const opened = openViewModal(pageRoot, { ...product, lotsLoading: true }, {
     activating: activationInProgress
   });
 
@@ -283,7 +283,7 @@ async function openProductView(product) {
     const lots = getLotList(result);
 
     products = products.map(item => (
-      item.id === productId ? { ...item, lots } : item
+      item.id === productId ? { ...item, lots, lotsLoading: false } : item
     ));
 
     const updated = products.find(item => item.id === productId);
@@ -291,6 +291,9 @@ async function openProductView(product) {
   } catch (error) {
     if (error.name === 'AbortError') return opened;
     console.error('[PRODUCT VIEW LOTS]', error);
+    if (pageRoot && viewProductId === productId) {
+      renderProductView({ ...product, lots: [], lotsLoading: false });
+    }
   }
 
   return opened;

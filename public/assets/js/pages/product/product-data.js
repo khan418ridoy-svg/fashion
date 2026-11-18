@@ -109,7 +109,13 @@ export function getProductVariants(product) {
   if (!Array.isArray(product.variants)) return [];
 
   return product.variants.map(variant => ({
-    name: firstValue(variant.name, variant.title, variant.label, '—'),
+    name: firstValue(
+      variant.name,
+      variant.title,
+      variant.label,
+      [variant.color, variant.size].filter(Boolean).join(' / '),
+      '—'
+    ),
     sku: firstValue(variant.sku, variant.code, '—'),
     size: firstValue(variant.size, variant.attributes?.size, '—'),
     color: firstValue(variant.color, variant.colour, variant.attributes?.color, '—'),
@@ -151,8 +157,10 @@ export function getStockInfo(product) {
 export function getPricingInfo(product) {
   const selling = getProductPrice(product);
   const cost = Number(firstValue(
+    product.buyPrice,
     product.costPrice,
     product.purchasePrice,
+    product.cost?.buyPrice,
     product.pricing?.costPrice,
     product.pricing?.purchasePrice,
     0
@@ -182,32 +190,134 @@ export function getProductLots(product) {
   if (!Array.isArray(product.lots)) return [];
 
   return product.lots.map((lot, index) => {
+    const rawVariants = Array.isArray(lot.variants) ? lot.variants : [];
+    const variants = rawVariants.map((variant, variantIndex) => {
+      const purchased = Number(firstValue(
+        variant.quantity,
+        variant.purchaseQuantity,
+        variant.purchasedQty,
+        variant.initialQuantity,
+        0
+      ));
+      const remaining = Number(firstValue(
+        variant.remainingQuantity,
+        variant.remainingQty,
+        variant.availableQuantity,
+        variant.stock,
+        0
+      ));
+      const sold = Number(firstValue(
+        variant.soldQuantity,
+        variant.soldQty,
+        Math.max(purchased - remaining, 0)
+      ));
+      const buyPrice = Number(firstValue(
+        variant.unitPurchaseCost,
+        variant.buyPrice,
+        variant.averageBuyRate,
+        purchased > 0 ? Number(variant.purchaseCost || 0) / purchased : undefined,
+        0
+      ));
+      const landedCost = Number(firstValue(
+        variant.unitLandedCost,
+        purchased > 0 ? Number(variant.landedCost || 0) / purchased : undefined,
+        buyPrice
+      ));
+
+      return {
+        id: firstValue(variant.variantId, variant.id, `variant-${variantIndex + 1}`),
+        sku: firstValue(variant.sku, variant.variantSku, '—'),
+        color: firstValue(variant.color, variant.colour, '—'),
+        size: firstValue(variant.size, '—'),
+        purchased,
+        sold,
+        remaining,
+        buyPrice,
+        landedCost,
+        stockValue: remaining * landedCost
+      };
+    });
+
+    const variantPurchased = variants.reduce((sum, item) => sum + item.purchased, 0);
+    const variantRemaining = variants.reduce((sum, item) => sum + item.remaining, 0);
     const purchased = Number(firstValue(
-      lot.quantity, lot.purchasedQty, lot.purchaseQty, lot.qty, lot.initialQty, 0
+      lot.totalQuantity,
+      lot.quantity,
+      lot.purchasedQty,
+      lot.purchaseQty,
+      lot.qty,
+      lot.initialQty,
+      variantPurchased,
+      0
     ));
     const remaining = Number(firstValue(
-      lot.remainingQty, lot.remaining, lot.availableQty, lot.stock, 0
+      lot.remainingQuantity,
+      lot.remainingQty,
+      lot.remaining,
+      lot.availableQuantity,
+      lot.availableQty,
+      lot.stock,
+      variantRemaining,
+      0
     ));
     const sold = Number(firstValue(
-      lot.soldQty, lot.sold, Math.max(purchased - remaining, 0)
+      lot.soldQuantity,
+      lot.soldQty,
+      lot.sold,
+      Math.max(purchased - remaining, 0)
     ));
-    const buyPrice = Number(firstValue(lot.buyPrice, lot.costPrice, lot.unitCost, 0));
+    const purchaseCost = Number(firstValue(
+      lot.purchaseCost,
+      variants.reduce((sum, item) => sum + (item.purchased * item.buyPrice), 0),
+      0
+    ));
+    const transportCost = Number(firstValue(lot.transportCost, lot.costs?.transportCost, 0));
+    const otherCost = Number(firstValue(lot.otherCost, lot.costs?.otherCost, 0));
+    const landedCost = Number(firstValue(
+      lot.landedCost,
+      lot.totalCost,
+      purchaseCost + transportCost + otherCost,
+      0
+    ));
+    const buyPrice = Number(firstValue(
+      lot.unitPurchaseCost,
+      lot.buyPrice,
+      lot.costPrice,
+      lot.unitCost,
+      purchased > 0 ? purchaseCost / purchased : undefined,
+      0
+    ));
+    const unitLandedCost = Number(firstValue(
+      lot.unitLandedCost,
+      purchased > 0 ? landedCost / purchased : undefined,
+      buyPrice,
+      0
+    ));
+    const normalizedStatus = String(firstValue(lot.status, '')).toLowerCase();
+    const status = ['cancelled', 'closed', 'draft'].includes(normalizedStatus)
+      ? normalizedStatus
+      : remaining <= 0 ? 'depleted' : 'available';
 
     return {
       lotNo: firstValue(lot.lotNo, lot.lotNumber, lot.name, lot.id, `Lot ${index + 1}`),
-      variant: firstValue(
-        lot.variantSku, lot.sku,
-        [lot.color, lot.size].filter(Boolean).join(' / '),
-        lot.variantId, '—'
-      ),
+      lotName: firstValue(lot.lotName, lot.name, lot.lotNumber, `Lot ${index + 1}`),
       supplier: firstValue(lot.supplier, lot.supplierName, '—'),
       date: formatDate(firstValue(lot.purchasedAt, lot.purchaseDate, lot.createdAt, lot.date)),
       purchased,
       sold,
       remaining,
       buyPrice,
-      stockValue: remaining * buyPrice,
-      status: remaining <= 0 ? 'finished' : 'active'
+      unitLandedCost,
+      purchaseCost,
+      transportCost,
+      otherCost,
+      landedCost,
+      stockValue: variants.length
+        ? variants.reduce((sum, item) => sum + item.stockValue, 0)
+        : remaining * unitLandedCost,
+      status,
+      note: firstValue(lot.note, lot.purchaseNote, ''),
+      variants
     };
   });
 }
@@ -229,17 +339,39 @@ export function getProductDetails(product) {
       product.category?.categoryName,
       product.category?.name,
       product.categoryId,
+      product.category?.categoryId,
       '—'
     ),
     subCategory: firstValue(
       product.subCategoryName,
       product.subCategory?.name,
       product.subCategory,
+      product.subcategoryId,
+      product.subCategoryId,
+      product.category?.subCategoryId,
+      '—'
+    ),
+    collection: firstValue(
+      product.collectionName,
+      product.collection?.name,
+      product.collectionId,
+      product.category?.collectionId,
       '—'
     ),
     slug: firstValue(product.slug, product.seo?.slug, '—'),
-    material: firstValue(product.material, product.attributes?.material, '—'),
+    material: firstValue(
+      product.material,
+      product.fabricType,
+      product.attributes?.material,
+      product.attributes?.fabricType,
+      '—'
+    ),
+    fit: firstValue(product.fit, product.attributes?.fit, '—'),
+    sleeveType: firstValue(product.sleeveType, product.attributes?.sleeveType, '—'),
+    washCare: firstValue(product.washCare, product.attributes?.washCare, '—'),
     weight: firstValue(product.weight, product.shipping?.weight, '—'),
+    supplier: firstValue(product.supplier, product.cost?.supplier, '—'),
+    purchaseNote: firstValue(product.purchaseNote, product.cost?.purchaseNote, ''),
     createdAt: formatDate(firstValue(product.createdAt, product.created_at)),
     updatedAt: formatDate(firstValue(product.updatedAt, product.updated_at)),
     lotCount: Array.isArray(product.lots)
@@ -258,6 +390,14 @@ export function getProductDetails(product) {
       ''
     ),
     seoTitle: firstValue(product.seo?.title, product.seo?.metaTitle, '—'),
-    seoDescription: firstValue(product.seo?.description, product.seo?.metaDescription, '—')
+    seoDescription: firstValue(product.seo?.description, product.seo?.metaDescription, '—'),
+    flags: {
+      newArrival: product.isNewArrival === true || product.flags?.isNewArrival === true,
+      featured: product.isFeatured === true || product.flags?.isFeatured === true,
+      bestSeller: product.isBestSeller === true || product.flags?.isBestSeller === true
+    },
+    ratingAvg: Number(firstValue(product.ratingAvg, product.review?.ratingAvg, 0)),
+    ratingCount: Number(firstValue(product.ratingCount, product.review?.ratingCount, 0)),
+    soldCount: Number(firstValue(product.soldCount, product.review?.soldCount, 0))
   };
 }

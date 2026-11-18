@@ -42,9 +42,11 @@ const PAGE_TITLES = {
   dashboard: 'Dashboard',
   products: 'Products',
   lots: 'Purchase Lots',
+  coupons: 'Coupons',
   collections: 'Collections',
   categories: 'Categories',
-  subcategories: 'Subcategories'
+  subcategories: 'Subcategories',
+  settings: 'Settings'
 };
 
 // ========================================
@@ -274,6 +276,17 @@ const lotsLink = createElement('a', {
     page: 'lots'
   }
 });
+
+  const couponsLink = createElement('a', {
+    className: 'sidebar-link',
+    text: '◇ Coupons',
+    attributes: {
+      href: '#coupons'
+    },
+    dataset: {
+      page: 'coupons'
+    }
+  });
   // ======================================
   // Collections Group
   // ======================================
@@ -360,6 +373,17 @@ const lotsLink = createElement('a', {
     submenu
   );
 
+  const settingsLink = createElement('a', {
+    className: 'sidebar-link',
+    text: '⚙ Settings',
+    attributes: {
+      href: '#settings'
+    },
+    dataset: {
+      page: 'settings'
+    }
+  });
+
   // ======================================
   // Add Navigation Items
   // ======================================
@@ -368,7 +392,9 @@ const lotsLink = createElement('a', {
     dashboardLink,
     productsLink,
     lotsLink,
-    collectionsGroup
+    couponsLink,
+    collectionsGroup,
+    settingsLink
   );
 
   sidebar.append(

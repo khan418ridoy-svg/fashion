@@ -31,6 +31,13 @@ const PRODUCT_FIELDS = {
     readonly: true
   },
 
+  barcode: {
+    id: 'product-barcode',
+    label: 'Barcode',
+    placeholder: 'Enter or scan product barcode',
+    maxLength: 100
+  },
+
   sku: {
     id: 'product-sku',
     label: 'SKU',
@@ -131,6 +138,7 @@ export function renderProductBasic(product = {}) {
     'name',
     'brand',
     'productCode',
+    'barcode',
     'sku'
   ];
 

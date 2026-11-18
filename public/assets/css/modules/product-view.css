@@ -1,8 +1,8 @@
 /* product-view modal - extra styles (existing CSS er niche add korun) */
 
 .product-view-modal {
+  width: min(1000px, 100%);
   max-height: 90vh;
-  overflow-y: auto;
 }
 
 .product-view-section {
@@ -110,6 +110,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 12px;
 }
 
 .product-view-tag {
@@ -128,4 +129,121 @@
 .product-view-muted {
   margin: 0;
   opacity: 0.6;
+}
+
+.product-view-lot-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.product-view-lot-card {
+  overflow: hidden;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+  border-radius: 12px;
+}
+
+.product-view-lot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.product-view-lot-header strong,
+.product-view-lot-header span {
+  display: block;
+}
+
+.product-view-lot-header div > span {
+  margin-top: 3px;
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.product-view-lot-status {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.product-view-lot-available { background: #dcfce7; color: #166534; }
+.product-view-lot-depleted,
+.product-view-lot-closed { background: #e2e8f0; color: #475569; }
+.product-view-lot-draft { background: #fef3c7; color: #92400e; }
+.product-view-lot-cancelled { background: #fee2e2; color: #991b1b; }
+
+.product-view-lot-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+
+.product-view-lot-meta > div {
+  min-width: 0;
+  padding: 11px 14px;
+  border-top: 1px solid rgba(128, 128, 128, 0.18);
+}
+
+.product-view-lot-meta dt {
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.6;
+  text-transform: uppercase;
+}
+
+.product-view-lot-meta dd {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.product-view-lot-note {
+  margin: 0;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(128, 128, 128, 0.18);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.product-view-lot-details {
+  border-top: 1px solid rgba(128, 128, 128, 0.18);
+}
+
+.product-view-lot-details summary {
+  padding: 12px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.product-view-lot-details > .product-view-muted {
+  padding: 0 14px 14px;
+}
+
+.product-view-details > div:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+  border-right: 0;
+}
+
+.product-view-lot-variants {
+  padding: 0 14px 14px;
+}
+
+@media (max-width: 720px) {
+  .product-view-lot-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 460px) {
+  .product-view-lot-meta {
+    grid-template-columns: 1fr;
+  }
 }

@@ -13,9 +13,11 @@ const PAGE_MODULES = {
   dashboard: () => import('./dashboard.js'),
   products: () => import('./product/index.js'),
   lots: () => import('./product/lot/list-page.js'),
+  coupons: () => import('./coupons.js'),
   collections: () => import('./collections.js'),
   categories: () => import('./categories.js'),
-  subcategories: () => import('./subcategories.js')
+  subcategories: () => import('./subcategories.js'),
+  settings: () => import('./settings.js')
 };
 
 const DEFAULT_PAGE = 'dashboard';

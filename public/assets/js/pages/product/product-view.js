@@ -142,7 +142,46 @@ function renderVariants(variants) {
   `);
 }
 
-function renderLots(lots) {
+function renderLotVariants(variants) {
+  if (!variants.length) {
+    return '<p class="product-view-muted">No variant breakdown was saved for this lot.</p>';
+  }
+
+  return `
+    <div class="product-view-table-wrap product-view-lot-variants">
+      <table class="product-view-table">
+        <thead>
+          <tr>
+            <th>SKU</th><th>Color</th><th>Size</th><th>Purchased</th>
+            <th>Sold</th><th>Remaining</th><th>Buy / Unit</th>
+            <th>Landed / Unit</th><th>Stock Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${variants.map(variant => `
+            <tr>
+              <td>${escapeHTML(String(variant.sku))}</td>
+              <td>${escapeHTML(String(variant.color))}</td>
+              <td>${escapeHTML(String(variant.size))}</td>
+              <td>${escapeHTML(formatNumber(variant.purchased))}</td>
+              <td>${escapeHTML(formatNumber(variant.sold))}</td>
+              <td><strong>${escapeHTML(formatNumber(variant.remaining))}</strong></td>
+              <td>${escapeHTML(formatMoney(variant.buyPrice))}</td>
+              <td>${escapeHTML(formatMoney(variant.landedCost))}</td>
+              <td>${escapeHTML(formatMoney(variant.stockValue))}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderLots(lots, loading = false) {
+  if (loading) {
+    return section('Purchase Lots', '<p class="product-view-muted">Loading purchase lot details...</p>');
+  }
+
   if (!lots.length) {
     return section('Purchase Lots', '<p class="product-view-muted">No lot data found.</p>');
   }
@@ -154,19 +193,42 @@ function renderLots(lots) {
     value: sum.value + lot.stockValue
   }), { purchased: 0, sold: 0, remaining: 0, value: 0 });
 
-  const rows = lots.map(lot => `
-    <tr>
-      <td>${escapeHTML(String(lot.lotNo))}</td>
-      <td>${escapeHTML(String(lot.variant))}</td>
-      <td>${escapeHTML(String(lot.supplier))}</td>
-      <td>${escapeHTML(lot.date)}</td>
-      <td>${escapeHTML(formatNumber(lot.purchased))}</td>
-      <td>${escapeHTML(formatNumber(lot.sold))}</td>
-      <td><strong>${escapeHTML(formatNumber(lot.remaining))}</strong></td>
-      <td>${escapeHTML(formatMoney(lot.buyPrice))}</td>
-      <td>${escapeHTML(formatMoney(lot.stockValue))}</td>
-      <td><span class="product-view-lot-${lot.status}">${escapeHTML(lot.status)}</span></td>
-    </tr>
+  const cards = lots.map(lot => `
+    <article class="product-view-lot-card">
+      <header class="product-view-lot-header">
+        <div>
+          <strong>${escapeHTML(String(lot.lotName))}</strong>
+          <span>${escapeHTML(String(lot.lotNo))}</span>
+        </div>
+        <span class="product-view-lot-status product-view-lot-${escapeHTML(lot.status)}">
+          ${escapeHTML(lot.status)}
+        </span>
+      </header>
+
+      <dl class="product-view-lot-meta">
+        ${detailRow('Supplier', lot.supplier)}
+        ${detailRow('Purchase Date', lot.date)}
+        ${detailRow('Purchased', formatNumber(lot.purchased))}
+        ${detailRow('Sold', formatNumber(lot.sold))}
+        ${detailRow('Remaining', formatNumber(lot.remaining))}
+        ${detailRow('Average Buy / Unit', formatMoney(lot.buyPrice))}
+        ${detailRow('Average Landed / Unit', formatMoney(lot.unitLandedCost))}
+        ${detailRow('Purchase Cost', formatMoney(lot.purchaseCost))}
+        ${detailRow('Transport Cost', formatMoney(lot.transportCost))}
+        ${detailRow('Other Cost', formatMoney(lot.otherCost))}
+        ${detailRow('Total Landed Cost', formatMoney(lot.landedCost))}
+        ${detailRow('Remaining Stock Value', formatMoney(lot.stockValue))}
+      </dl>
+
+      ${lot.note ? `
+        <p class="product-view-lot-note"><strong>Note:</strong> ${escapeHTML(String(lot.note))}</p>
+      ` : ''}
+
+      <details class="product-view-lot-details" ${lot.variants.length === 1 ? 'open' : ''}>
+        <summary>Variant breakdown (${lot.variants.length})</summary>
+        ${renderLotVariants(lot.variants)}
+      </details>
+    </article>
   `).join('');
 
   return section(`Purchase Lots (${lots.length})`, `
@@ -176,18 +238,7 @@ function renderLots(lots) {
       ${statCard('Total Remaining', formatNumber(totals.remaining))}
       ${statCard('Stock Value (cost)', formatMoney(totals.value))}
     </div>
-    <div class="product-view-table-wrap">
-      <table class="product-view-table">
-        <thead>
-          <tr>
-            <th>Lot</th><th>Variant</th><th>Supplier</th><th>Date</th>
-            <th>Purchased</th><th>Sold</th><th>Remaining</th>
-            <th>Buy Price</th><th>Stock Value</th><th>Status</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
+    <div class="product-view-lot-list">${cards}</div>
   `);
 }
 
@@ -208,10 +259,15 @@ function renderBasicInfo(details) {
       ${detailRow('Product Code', details.productCode)}
       ${detailRow('Barcode', details.barcode)}
       ${detailRow('Brand', details.brand)}
+      ${detailRow('Collection', details.collection)}
       ${detailRow('Category', details.category)}
       ${detailRow('Sub Category', details.subCategory)}
-      ${detailRow('Material', details.material)}
+      ${detailRow('Fabric / Material', details.material)}
+      ${detailRow('Fit', details.fit)}
+      ${detailRow('Sleeve Type', details.sleeveType)}
+      ${detailRow('Wash Care', details.washCare)}
       ${detailRow('Weight', details.weight)}
+      ${detailRow('Default Supplier', details.supplier)}
       ${detailRow('Slug', details.slug)}
       ${detailRow('Created', details.createdAt)}
       ${detailRow('Last Updated', details.updatedAt)}
@@ -235,6 +291,29 @@ function renderSeo(details) {
       ${detailRow('SEO Title', details.seoTitle)}
       ${detailRow('SEO Description', details.seoDescription)}
     </dl>
+  `);
+}
+
+function renderMerchandising(details) {
+  const enabledFlags = [
+    details.flags.newArrival ? 'New Arrival' : '',
+    details.flags.featured ? 'Featured' : '',
+    details.flags.bestSeller ? 'Best Seller' : ''
+  ].filter(Boolean);
+
+  return section('Sales & Merchandising', `
+    <div class="product-view-stats">
+      ${statCard('Average Rating', `${details.ratingAvg.toFixed(1)} / 5`)}
+      ${statCard('Review Count', formatNumber(details.ratingCount))}
+      ${statCard('Sold Count', formatNumber(details.soldCount))}
+    </div>
+    <div class="product-view-tags">
+      ${(enabledFlags.length ? enabledFlags : ['No merchandising flags'])
+        .map(flag => `<span class="product-view-tag">${escapeHTML(flag)}</span>`).join('')}
+    </div>
+    ${details.purchaseNote ? `
+      <p class="product-view-description"><strong>Purchase note:</strong> ${escapeHTML(details.purchaseNote)}</p>
+    ` : ''}
   `);
 }
 
@@ -263,9 +342,10 @@ function buildProductViewHTML(product) {
     ${renderPricing(getPricingInfo(product))}
     ${renderInventory(getStockInfo(product), details.lotCount)}
     ${renderVariants(getProductVariants(product))}
-    ${renderLots(getProductLots(product))}
+    ${renderLots(getProductLots(product), product.lotsLoading === true)}
     ${renderBasicInfo(details)}
     ${renderDescription(details)}
+    ${renderMerchandising(details)}
     ${renderTags(getProductTags(product))}
     ${renderSeo(details)}
   `;

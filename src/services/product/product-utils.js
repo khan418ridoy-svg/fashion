@@ -352,6 +352,9 @@ function cleanProductInput(input) {
   // Common text fields.
   const stringFields = [
     'name',
+    'brand',
+    'productCode',
+    'barcode',
     'slug',
     'sku',
     'shortDescription',

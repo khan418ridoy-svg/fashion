@@ -131,6 +131,20 @@ function discountFor(coupon, purchaseAmount) {
   return Math.round((cap > 0 ? Math.min(raw, cap) : raw) * 100) / 100;
 }
 
+function collectionSummary(coupon = {}) {
+  const quantity = Number(coupon.quantity || 0);
+  const collectedCount = Number(coupon.collectedCount || 0);
+
+  return {
+    collectedCount,
+    quantity,
+    remainingCount: quantity > 0
+      ? Math.max(0, quantity - collectedCount)
+      : null,
+    exhausted: quantity > 0 && collectedCount >= quantity
+  };
+}
+
 async function createCoupon(payload = {}, admin = {}) {
   const input = normalizeCoupon(payload);
   const ref = db.collection(COUPONS).doc();
@@ -205,8 +219,7 @@ async function verifyCoupon(payload = {}) {
     minimumPurchase: coupon.minimumPurchase,
     maxDiscount: coupon.maxDiscount,
     discountAmount: discountFor(coupon, purchaseAmount),
-    collectedCount: coupon.collectedCount,
-    quantity: coupon.quantity,
+    ...collectionSummary(coupon),
     expiresAt: coupon.expiresAt || null
   };
 }
@@ -234,7 +247,15 @@ async function collectCoupon(payload = {}) {
 
     if (!couponSnapshot.exists) throw error('Coupon not found.', 404, 'COUPON_NOT_FOUND');
     if (claimSnapshot.exists) {
-      return { alreadyCollected: true, claim: claimSnapshot.data(), coupon: couponSnapshot.data() };
+      const coupon = couponSnapshot.data() || {};
+      return {
+        alreadyCollected: true,
+        claim: claimSnapshot.data(),
+        coupon: {
+          ...coupon,
+          ...collectionSummary(coupon)
+        }
+      };
     }
 
     const coupon = couponSnapshot.data() || {};
@@ -257,7 +278,11 @@ async function collectCoupon(payload = {}) {
     return {
       alreadyCollected: false,
       claim,
-      coupon: { ...coupon, collectedCount }
+      coupon: {
+        ...coupon,
+        collectedCount,
+        ...collectionSummary({ ...coupon, collectedCount })
+      }
     };
   });
 }
