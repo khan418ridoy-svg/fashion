@@ -1,309 +1,235 @@
-
 'use strict';
 
-// ========================================
-// PRODUCT INVENTORY
-// Inventory Summary & Stock Status
-// ========================================
+// Inventory is calculated from variants when variants exist. Without
+// variants, Total Stock and Low Stock Variants remain manually editable.
 
 import {
   getProductElement,
   showProductMessage
 } from './product-utils.js';
 
-
-// ========================================
-// STATE
-// ========================================
+const SELECTORS = {
+  container: '#product-inventory-container',
+  totalStock: '#product-total-stock',
+  lowStockCount: '#product-low-stock-count',
+  stockStatus: '#product-stock-status'
+};
 
 let inventoryData = {
+  manualTotalStock: 0,
+  manualLowStockCount: 0,
   totalStock: 0,
-  availableStock: 0,
   lowStockCount: 0,
-  stockStatus: 'out_of_stock',
-  hasLowStock: false,
+  stockStatus: false,
   variants: []
 };
 
 let initialized = false;
 
-
-// ========================================
-// SELECTORS
-// ========================================
-
-const SELECTORS = {
-  container: '#product-inventory-container',
-  totalStock: '#product-total-stock',
-  availableStock: '#product-available-stock',
-  lowStockCount: '#product-low-stock-count',
-  stockStatus: '#product-stock-status',
-  hasLowStock: '#product-has-low-stock'
-};
-
-
-// ========================================
-// GET ELEMENTS
-// ========================================
-
 function getElements() {
   return {
     container: getProductElement(SELECTORS.container),
     totalStock: getProductElement(SELECTORS.totalStock),
-    availableStock: getProductElement(SELECTORS.availableStock),
     lowStockCount: getProductElement(SELECTORS.lowStockCount),
-    stockStatus: getProductElement(SELECTORS.stockStatus),
-    hasLowStock: getProductElement(SELECTORS.hasLowStock)
+    stockStatus: getProductElement(SELECTORS.stockStatus)
   };
 }
 
-
-// ========================================
-// NORMALIZE NUMBER
-// ========================================
-
-function toNumber(value) {
+function toNonNegativeInteger(value) {
   const number = Number(value);
-
-  return Number.isFinite(number) ? number : 0;
+  return Number.isFinite(number)
+    ? Math.max(0, Math.floor(number))
+    : 0;
 }
 
+function normalizeVariants(variants = []) {
+  return Array.isArray(variants)
+    ? variants.map(variant => ({
+        color: String(variant?.color || ''),
+        size: String(variant?.size || ''),
+        stock: toNonNegativeInteger(variant?.stock),
+        lowStockAlert: toNonNegativeInteger(variant?.lowStockAlert)
+      }))
+    : [];
+}
 
-// ========================================
-// GET STOCK STATUS
-// ========================================
+export function getProductStockStatus(totalStock) {
+  return toNonNegativeInteger(totalStock) > 0;
+}
 
-export function getProductStockStatus(totalStock, lowStockCount = 0) {
-  const stock = toNumber(totalStock);
-  const lowCount = toNumber(lowStockCount);
+function calculateInventory() {
+  const hasVariants = inventoryData.variants.length > 0;
 
-  if (stock <= 0) {
-    return 'out_of_stock';
+  if (hasVariants) {
+    inventoryData.totalStock = inventoryData.variants.reduce(
+      (sum, variant) => sum + variant.stock,
+      0
+    );
+
+    inventoryData.lowStockCount = inventoryData.variants.filter(
+      variant =>
+        variant.lowStockAlert > 0 &&
+        variant.stock <= variant.lowStockAlert
+    ).length;
+  } else {
+    inventoryData.totalStock = inventoryData.manualTotalStock;
+    inventoryData.lowStockCount = inventoryData.manualLowStockCount;
   }
 
-  if (lowCount > 0) {
-    return 'low_stock';
-  }
-
-  return 'in_stock';
+  inventoryData.stockStatus = getProductStockStatus(
+    inventoryData.totalStock
+  );
 }
-
-
-// ========================================
-// GET STOCK STATUS LABEL
-// ========================================
-
-function getStockStatusLabel(status) {
-  const labels = {
-    in_stock: 'In Stock',
-    low_stock: 'Low Stock',
-    out_of_stock: 'Out of Stock'
-  };
-
-  return labels[status] || 'Unknown';
-}
-
-
-// ========================================
-// RENDER INVENTORY SUMMARY
-// ========================================
 
 function renderInventorySummary() {
+  calculateInventory();
+
   const elements = getElements();
+  const hasVariants = inventoryData.variants.length > 0;
 
   if (elements.totalStock) {
-    elements.totalStock.value = inventoryData.totalStock;
-  }
-
-  if (elements.availableStock) {
-    elements.availableStock.value = inventoryData.availableStock;
+    elements.totalStock.value = String(inventoryData.totalStock);
+    elements.totalStock.readOnly = hasVariants;
+    elements.totalStock.title = hasVariants
+      ? 'Variant stock থেকে স্বয়ংক্রিয়ভাবে হিসাব করা হয়েছে।'
+      : 'Variant না থাকায় stock manually দেওয়া যাবে।';
   }
 
   if (elements.lowStockCount) {
-    elements.lowStockCount.value = inventoryData.lowStockCount;
+    elements.lowStockCount.value = String(inventoryData.lowStockCount);
+    elements.lowStockCount.readOnly = hasVariants;
+    elements.lowStockCount.title = hasVariants
+      ? 'Variant low-stock alert থেকে স্বয়ংক্রিয়ভাবে হিসাব করা হয়েছে।'
+      : 'Variant না থাকায় manually দেওয়া যাবে।';
   }
 
   if (elements.stockStatus) {
-    elements.stockStatus.value = inventoryData.stockStatus;
-    elements.stockStatus.textContent =
-      getStockStatusLabel(inventoryData.stockStatus);
-  }
-
-  if (elements.hasLowStock) {
-    elements.hasLowStock.checked = inventoryData.hasLowStock;
+    elements.stockStatus.value = inventoryData.stockStatus
+      ? 'true'
+      : 'false';
+    elements.stockStatus.readOnly = true;
   }
 }
 
-
-// ========================================
-// SET INVENTORY DATA
-// Backend Data / Edit Product
-// ========================================
-
 export function setProductInventoryData(data = {}) {
-  inventoryData = {
-    totalStock: toNumber(data.totalStock),
-    availableStock: toNumber(
-      data.availableStock ?? data.totalStock
-    ),
-    lowStockCount: toNumber(data.lowStockCount),
-    stockStatus: data.stockStatus || 'out_of_stock',
-    hasLowStock: data.hasLowStock === true,
-    variants: Array.isArray(data.variants)
-      ? data.variants.map(variant => ({
-          variantSku: variant.variantSku || '',
-          color: variant.color || '',
-          size: variant.size || '',
-          stock: toNumber(variant.stock),
-          lowStockAlert: toNumber(variant.lowStockAlert)
-        }))
-      : []
-  };
+  inventoryData.manualTotalStock = toNonNegativeInteger(
+    data.manualTotalStock ?? data.totalStock
+  );
+  inventoryData.manualLowStockCount = toNonNegativeInteger(
+    data.manualLowStockCount ?? data.lowStockCount
+  );
+  inventoryData.variants = normalizeVariants(data.variants);
 
   renderInventorySummary();
 }
 
-
-// ========================================
-// GET INVENTORY DATA
-// ========================================
+export function setProductInventoryVariants(variants = []) {
+  inventoryData.variants = normalizeVariants(variants);
+  renderInventorySummary();
+}
 
 export function getProductInventoryData() {
+  calculateInventory();
+
   return {
     totalStock: inventoryData.totalStock,
-    availableStock: inventoryData.availableStock,
     lowStockCount: inventoryData.lowStockCount,
     stockStatus: inventoryData.stockStatus,
-    hasLowStock: inventoryData.hasLowStock
+    hasStock: inventoryData.stockStatus,
+    hasVariants: inventoryData.variants.length > 0,
+    variants: inventoryData.variants.map(item => ({ ...item }))
   };
 }
 
-
-// ========================================
-// VALIDATE INVENTORY
-// ========================================
-
 export function validateProductInventory() {
-  if (inventoryData.totalStock < 0) {
-    showProductMessage(
-      'Total Stock সঠিক নয়।',
-      'warning'
-    );
+  calculateInventory();
 
+  if (!Number.isSafeInteger(inventoryData.totalStock)) {
+    showProductMessage('Total Stock পূর্ণসংখ্যা হতে হবে।', 'warning');
     return false;
   }
 
-  if (inventoryData.availableStock < 0) {
-    showProductMessage(
-      'Available Stock সঠিক নয়।',
-      'warning'
-    );
-
+  if (!Number.isSafeInteger(inventoryData.lowStockCount)) {
+    showProductMessage('Low Stock Variants পূর্ণসংখ্যা হতে হবে।', 'warning');
     return false;
   }
 
   return true;
 }
 
-
-// ========================================
-// RESET INVENTORY
-// ========================================
-
 export function resetProductInventory() {
   inventoryData = {
+    manualTotalStock: 0,
+    manualLowStockCount: 0,
     totalStock: 0,
-    availableStock: 0,
     lowStockCount: 0,
-    stockStatus: 'out_of_stock',
-    hasLowStock: false,
+    stockStatus: false,
     variants: []
   };
 
   renderInventorySummary();
 }
 
-
-// ========================================
-// REFRESH INVENTORY FROM BACKEND
-// ========================================
-
-export async function refreshProductInventory(productId) {
-  if (!productId) {
-    showProductMessage(
-      'Product ID পাওয়া যায়নি।',
-      'error'
-    );
-
-    return false;
-  }
-
-  try {
-    const response = await fetch(
-      `/api/products/${encodeURIComponent(productId)}/inventory`,
-      {
-        method: 'GET',
-        credentials: 'same-origin',
-        headers: {
-          Accept: 'application/json'
-        }
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Inventory request failed: ${response.status}`);
-    }
-
-    const result = await response.json();
-
-    if (result.success === false) {
-      throw new Error(
-        result.message || 'Inventory load failed'
-      );
-    }
-
-    setProductInventoryData(result.data || result);
-
-    return true;
-
-  } catch (error) {
-    console.error('[PRODUCT INVENTORY]', error);
-
-    showProductMessage(
-      'Inventory information load করা যায়নি।',
-      'error'
-    );
-
-    return false;
-  }
+function handleVariantsChanged(event) {
+  setProductInventoryVariants(event.detail?.variants || []);
 }
 
+function bindEvents() {
+  const elements = getElements();
 
-// ========================================
-// INITIALIZE
-// ========================================
+  if (elements.container?.dataset.inventoryEventsBound !== 'true') {
+    elements.totalStock?.addEventListener('input', () => {
+      if (inventoryData.variants.length) return;
+      inventoryData.manualTotalStock = toNonNegativeInteger(
+        elements.totalStock.value
+      );
+      renderInventorySummary();
+    });
 
-export function initProductInventory() {
-  if (initialized) return;
+    elements.lowStockCount?.addEventListener('input', () => {
+      if (inventoryData.variants.length) return;
+      inventoryData.manualLowStockCount = toNonNegativeInteger(
+        elements.lowStockCount.value
+      );
+      renderInventorySummary();
+    });
+
+    if (elements.container) {
+      elements.container.dataset.inventoryEventsBound = 'true';
+    }
+  }
+
+  document.removeEventListener(
+    'product:variants-changed',
+    handleVariantsChanged
+  );
+  document.addEventListener(
+    'product:variants-changed',
+    handleVariantsChanged
+  );
+}
+
+export function initProductInventory({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const { container } = getElements();
 
   if (!container) {
-    console.warn(
-      '[PRODUCT INVENTORY] Inventory container not found.'
-    );
-
+    console.warn('[PRODUCT INVENTORY] Inventory container not found.');
     return;
   }
 
+  bindEvents();
   initialized = true;
-
   renderInventorySummary();
 }
 
-
-// ========================================
-// DEFAULT EXPORT
-// ========================================
+export function cleanupProductInventory() {
+  document.removeEventListener(
+    'product:variants-changed',
+    handleVariantsChanged
+  );
+  initialized = false;
+}
 
 export default initProductInventory;

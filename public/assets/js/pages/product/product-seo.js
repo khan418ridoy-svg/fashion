@@ -148,6 +148,12 @@ export function validateProductSEO() {
 
   const slug = elements.slug?.value.trim() || '';
 
+  if (!slug) {
+    showProductMessage('Product name থেকে slug তৈরি করা যায়নি।', 'warning');
+    getProductElement('#product-name')?.focus();
+    return false;
+  }
+
   if (slug && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
     showProductMessage(
       'Slug-এ শুধু English letter, number ও hyphen ব্যবহার করুন।',
@@ -156,6 +162,28 @@ export function validateProductSEO() {
 
     elements.slug?.focus();
     return false;
+  }
+
+  try {
+    const existingSlugs = JSON.parse(
+      elements.slug?.dataset.existingSlugs || '[]'
+    );
+    const currentSlug = String(
+      elements.slug?.dataset.currentSlug || ''
+    ).toLowerCase();
+
+    const duplicate = Array.isArray(existingSlugs) &&
+      existingSlugs.some(item => {
+        const value = String(item || '').trim().toLowerCase();
+        return value === slug.toLowerCase() && value !== currentSlug;
+      });
+
+    if (duplicate) {
+      showProductMessage('এই Product Slug আগে ব্যবহার করা হয়েছে।', 'warning');
+      return false;
+    }
+  } catch (error) {
+    console.warn('[PRODUCT SEO] Slug list could not be checked.', error);
   }
 
   return true;
@@ -202,8 +230,8 @@ function bindEvents() {
 // INITIALIZE
 // ========================================
 
-export function initProductSEO() {
-  if (initialized) return;
+export function initProductSEO({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const elements = getElements();
 

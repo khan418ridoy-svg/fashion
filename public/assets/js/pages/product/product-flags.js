@@ -121,8 +121,8 @@ export function resetProductFlags() {
 // INITIALIZE
 // ========================================
 
-export function initProductFlags() {
-  if (initialized) return;
+export function initProductFlags({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const elements = getElements();
 

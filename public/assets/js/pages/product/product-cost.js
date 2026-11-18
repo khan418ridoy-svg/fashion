@@ -228,8 +228,8 @@ export function resetProductCost() {
 // INITIALIZE
 // ========================================
 
-export function initProductCost() {
-  if (initialized) return;
+export function initProductCost({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const elements = getElements();
 

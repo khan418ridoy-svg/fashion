@@ -2,25 +2,122 @@
 'use strict';
 
 // ========================================
-// PRODUCT LOT SYSTEM
-// MAIN ENTRY POINT
+// PRODUCT FORM
 // ========================================
 
+import {
+  renderProductForm,
+  initProductForm,
+  loadProductData,
+  resetProductForm
+} from '../product-form.js';
 
 // ========================================
-// PRODUCT LOTS
+// PRODUCT BASIC
+// ========================================
+
+import {
+  bindProductBasicEvents
+} from '../product-basic.js';
+
+// ========================================
+// PRODUCT CATEGORY
+// ========================================
+
+import {
+  initProductCategory
+} from '../product-category.js';
+
+// ========================================
+// PRODUCT PRICING
+// ========================================
+
+import {
+  initProductPricing
+} from '../product-pricing.js';
+
+// ========================================
+// PRODUCT VARIANTS
+// ========================================
+
+import {
+  initProductVariants
+} from '../product-variants.js';
+
+// ========================================
+// PRODUCT INVENTORY
+// ========================================
+
+import {
+  initProductInventory
+} from '../product-inventory.js';
+
+// ========================================
+// PRODUCT IMAGES
+// ========================================
+
+import {
+  initProductImages
+} from '../product-images.js';
+
+// ========================================
+// PRODUCT DESCRIPTION
+// ========================================
+
+import {
+  initProductDescription
+} from '../product-description.js';
+
+// ========================================
+// PRODUCT SEO
+// ========================================
+
+import {
+  initProductSEO
+} from '../product-seo.js';
+
+// ========================================
+// PRODUCT COST
+// ========================================
+
+import {
+  initProductCost
+} from '../product-cost.js';
+
+// ========================================
+// PRODUCT FLAGS
+// ========================================
+
+import {
+  initProductFlags
+} from '../product-flags.js';
+
+// ========================================
+// PRODUCT REVIEW
+// ========================================
+
+import {
+  initProductReview
+} from '../product-review.js';
+
+// ========================================
+// PRODUCT AI
+// ========================================
+
+import {
+  initProductAI
+} from '../product-ai.js';
+
+// ========================================
+// PRODUCT LOT LIST
 // ========================================
 
 import {
   initProductLots,
   loadProductLots,
   refreshProductLots,
-  resetProductLots,
-  renderProductLots,
-  setProductLots,
-  getProductLots
+  resetProductLots
 } from './product-lots.js';
-
 
 // ========================================
 // LOT CREATE
@@ -29,15 +126,8 @@ import {
 import {
   initLotCreate,
   setLotCreateProductId,
-  getLotCreateProductId,
-  openLotCreate,
-  closeLotCreate,
-  getLotCreateData,
-  validateLotCreate,
-  createProductLot,
   resetLotCreate
 } from './lot-create.js';
-
 
 // ========================================
 // LOT VARIANTS
@@ -45,65 +135,122 @@ import {
 
 import {
   initLotVariants,
-  renderLotVariants,
-  addLotVariant,
-  removeLotVariant,
-  getLotVariantsData,
-  setLotVariantsData,
-  validateLotVariants,
-  getLotTotalQuantity,
   resetLotVariants
 } from './lot-variants.js';
-
 
 // ========================================
 // LOT COST
 // ========================================
 
+// NOTE:
+// GitHub-এর বর্তমান lot-history.js ফাইলে
+// Cost Module-এর exports রয়েছে।
+
 import {
   initLotCost,
-  getLotCostData,
-  setLotCostData,
-  validateLotCost,
-  getLotTotalCost,
-  updateLotCostSummary,
   resetLotCost
-} from './lot-cost.js';
-
+} from './lot-history.js';
 
 // ========================================
 // LOT HISTORY
 // ========================================
 
+// NOTE:
+// GitHub-এর বর্তমান lot-cost.js ফাইলে
+// History Module-এর exports রয়েছে।
+
 import {
   initLotHistory,
-  loadLotHistory,
-  openLotHistory,
-  closeLotHistory,
-  refreshLotHistory,
-  resetLotHistory,
-  renderLotHistory,
-  setLotHistory,
-  getLotHistory
-} from './lot-history.js';
+  resetLotHistory
+} from './lot-cost.js';
 
 
 // ========================================
-// MODULE STATE
+// PAGE STATE
 // ========================================
 
-let initialized = false;
+let pageRoot = null;
 let currentProductId = '';
+let currentLotId = '';
+
+let pageInitialized = false;
+let pageAbortController = null;
 
 
 // ========================================
-// INITIALIZE ALL MODULES
+// GET PRODUCT ROOT
 // ========================================
 
-export function initProductLotPage() {
-  if (initialized) return;
+function getRoot(container = document) {
+  return container.querySelector('.product-page');
+}
 
-  // Purchase Lot List
+
+// ========================================
+// GET PRODUCT ID
+// ========================================
+
+function getProductId(options = {}) {
+  const value =
+    options.productId ||
+    options.id ||
+    '';
+
+  return String(value).trim();
+}
+
+
+// ========================================
+// INITIALIZE PRODUCT MODULES
+// ========================================
+
+function initializeProductModules() {
+  if (pageInitialized) {
+    return;
+  }
+
+  if (!pageRoot) {
+    throw new Error(
+      'Product page root was not found.'
+    );
+  }
+
+  // Basic Information
+  bindProductBasicEvents(pageRoot);
+
+  // Product Sections
+  initProductCategory();
+  initProductPricing();
+  initProductVariants();
+  initProductInventory();
+  initProductImages();
+  initProductDescription();
+  initProductSEO();
+  initProductCost();
+  initProductFlags();
+  initProductReview();
+
+  // AI
+  initProductAI();
+
+  pageInitialized = true;
+
+  console.info(
+    '[PRODUCT PAGE] Product modules initialized.'
+  );
+}
+
+
+// ========================================
+// INITIALIZE LOT MODULES
+// ========================================
+
+function initializeLotModules(productId) {
+  if (!productId) {
+    return;
+  }
+
+  // Lot List
   initProductLots();
 
   // Lot Variants
@@ -118,42 +265,174 @@ export function initProductLotPage() {
   // Lot Create
   initLotCreate();
 
-  initialized = true;
+  // Set current Product ID
+  setLotCreateProductId(productId);
 
-  console.info('[PRODUCT LOT] Initialized.');
+  console.info(
+    '[PRODUCT LOT] Modules initialized.',
+    productId
+  );
 }
 
 
 // ========================================
-// LOAD PRODUCT LOT PAGE
+// LOAD PRODUCT
 // ========================================
 
-export async function loadProductLotPage(productId) {
+async function loadProduct(productId) {
   if (!productId) {
-    console.warn(
-      '[PRODUCT LOT] Product ID is required.'
-    );
-
-    return false;
+    return true;
   }
 
-  initProductLotPage();
+  try {
+    await loadProductData(productId);
 
-  currentProductId = String(productId);
+    if (pageAbortController?.signal.aborted) {
+      return false;
+    }
 
-  // Set Product ID for Lot Create Module
-  setLotCreateProductId(currentProductId);
+    // Load Product Lots
+    await loadProductLots(productId);
 
-  // Load Purchase Lots
-  return await loadProductLots(currentProductId);
+    if (pageAbortController?.signal.aborted) {
+      return false;
+    }
+
+    console.info(
+      '[PRODUCT PAGE] Product loaded.',
+      productId
+    );
+
+    return true;
+
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      return false;
+    }
+
+    console.error(
+      '[PRODUCT PAGE] Product loading failed:',
+      error
+    );
+
+    throw error;
+  }
 }
 
 
 // ========================================
-// REFRESH PRODUCT LOT PAGE
+// RENDER PRODUCT PAGE
 // ========================================
 
-export async function refreshProductLotPage() {
+export function render({
+  options = {},
+  signal
+} = {}) {
+
+  currentProductId = getProductId(options);
+
+  currentLotId = String(
+    options.lotId || ''
+  ).trim();
+
+  pageAbortController = {
+    signal
+  };
+
+  const page = renderProductForm({
+    productId: currentProductId,
+    lotId: currentLotId
+  });
+
+  if (
+    !page ||
+    typeof page.nodeType !== 'number'
+  ) {
+    throw new Error(
+      'renderProductForm() must return a DOM element.'
+    );
+  }
+
+  page.classList.add('product-page');
+
+  pageRoot = page;
+
+  return page;
+}
+
+
+// ========================================
+// BIND PRODUCT PAGE EVENTS
+// ========================================
+
+export async function bindEvents({
+  container,
+  options = {},
+  signal
+} = {}) {
+
+  pageRoot = getRoot(container);
+
+  if (!pageRoot) {
+    throw new Error(
+      'Product page container .product-page was not found.'
+    );
+  }
+
+  currentProductId = getProductId(options);
+
+  currentLotId = String(
+    options.lotId || ''
+  ).trim();
+
+  pageAbortController = {
+    signal
+  };
+
+  // Initialize Product Form
+  await initProductForm({
+    container: pageRoot,
+    productId: currentProductId,
+    lotId: currentLotId,
+    signal
+  });
+
+  // Existing Product
+  if (currentProductId) {
+
+    // Open selected Lot History only if needed.
+    if (currentLotId) {
+      pageRoot.dispatchEvent(
+        new CustomEvent('product:open-lot', {
+          bubbles: true,
+          detail: {
+            productId: currentProductId,
+            lotId: currentLotId
+          }
+        })
+      );
+    }
+
+  } else {
+    // New Product
+    resetProductForm();
+  }
+
+  console.info(
+    '[PRODUCT PAGE] Page ready.',
+    {
+      productId: currentProductId,
+      lotId: currentLotId
+    }
+  );
+}
+
+
+// ========================================
+// REFRESH PRODUCT LOTS
+// ========================================
+
+export async function refreshProductPageLots() {
   if (!currentProductId) {
     return false;
   }
@@ -166,102 +445,48 @@ export async function refreshProductLotPage() {
 // GET CURRENT PRODUCT ID
 // ========================================
 
-export function getCurrentLotProductId() {
+export function getCurrentProductPageId() {
   return currentProductId;
 }
 
 
 // ========================================
-// LOT CREATE ACTIONS
+// GET CURRENT LOT ID
 // ========================================
 
-export {
-  openLotCreate,
-  closeLotCreate,
-  getLotCreateData,
-  validateLotCreate,
-  createProductLot,
-  resetLotCreate,
-  getLotCreateProductId
-};
+export function getCurrentProductLotId() {
+  return currentLotId;
+}
 
 
 // ========================================
-// LOT VARIANT ACTIONS
+// CLEANUP
 // ========================================
 
-export {
-  renderLotVariants,
-  addLotVariant,
-  removeLotVariant,
-  getLotVariantsData,
-  setLotVariantsData,
-  validateLotVariants,
-  getLotTotalQuantity,
-  resetLotVariants
-};
+export function cleanup() {
 
+  // Reset Product Form
+  resetProductForm();
 
-// ========================================
-// LOT COST ACTIONS
-// ========================================
-
-export {
-  getLotCostData,
-  setLotCostData,
-  validateLotCost,
-  getLotTotalCost,
-  updateLotCostSummary,
-  resetLotCost
-};
-
-
-// ========================================
-// LOT HISTORY ACTIONS
-// ========================================
-
-export {
-  loadLotHistory,
-  openLotHistory,
-  closeLotHistory,
-  refreshLotHistory,
-  resetLotHistory,
-  renderLotHistory,
-  setLotHistory,
-  getLotHistory
-};
-
-
-// ========================================
-// LOT LIST ACTIONS
-// ========================================
-
-export {
-  loadProductLots,
-  refreshProductLots,
-  renderProductLots,
-  setProductLots,
-  getProductLots,
-  resetProductLots
-};
-
-
-// ========================================
-// RESET PRODUCT LOT PAGE
-// ========================================
-
-export function resetProductLotPage() {
+  // Reset Lot Modules
   resetProductLots();
-
   resetLotCreate();
-
   resetLotVariants();
-
   resetLotCost();
-
   resetLotHistory();
 
+  // Clear State
+  pageRoot = null;
+
   currentProductId = '';
+  currentLotId = '';
+
+  pageInitialized = false;
+  pageAbortController = null;
+
+  console.info(
+    '[PRODUCT PAGE] Page cleaned up.'
+  );
 }
 
 
@@ -270,9 +495,10 @@ export function resetProductLotPage() {
 // ========================================
 
 export default {
-  initProductLotPage,
-  loadProductLotPage,
-  refreshProductLotPage,
-  getCurrentLotProductId,
-  resetProductLotPage
+  render,
+  bindEvents,
+  cleanup,
+  refreshProductPageLots,
+  getCurrentProductPageId,
+  getCurrentProductLotId
 };

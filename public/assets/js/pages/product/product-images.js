@@ -109,10 +109,26 @@ function getCloudinaryConfig() {
   const config = window.APP_CONFIG?.cloudinary;
 
   if (!config?.cloudName || !config?.uploadPreset) {
-    throw new Error('Cloudinary configuration পাওয়া যায়নি।');
+    return null;
   }
 
   return config;
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.addEventListener('load', () => {
+      resolve(String(reader.result));
+    });
+
+    reader.addEventListener('error', () => {
+      reject(reader.error || new Error('Image file পড়া যায়নি।'));
+    });
+
+    reader.readAsDataURL(file);
+  });
 }
 
 
@@ -122,6 +138,19 @@ function getCloudinaryConfig() {
 
 async function uploadToCloudinary(file) {
   const config = getCloudinaryConfig();
+
+  if (!config) {
+    return {
+      url: await readFileAsDataURL(file),
+      publicId: '',
+      width: 0,
+      height: 0,
+      format: file.type.split('/')[1] || '',
+      bytes: file.size,
+      fileName: file.name,
+      localOnly: true
+    };
+  }
 
   const formData = new FormData();
 
@@ -190,7 +219,11 @@ async function uploadProductImage(file) {
       order: productImages.length + 1,
       width: uploaded.width,
       height: uploaded.height,
-      format: uploaded.format
+      format: uploaded.format,
+      fileName: uploaded.fileName || file.name,
+      localOnly: uploaded.localOnly === true,
+      isMain: productImages.length === 0,
+      isHover: false
     };
 
     productImages.push(image);
@@ -198,8 +231,11 @@ async function uploadProductImage(file) {
     renderProductImages();
 
     showProductMessage(
-      'ছবি সফলভাবে Upload হয়েছে।',
-      'success'
+      uploaded.localOnly
+        ? 'ছবি preview-তে যোগ হয়েছে। Cloudinary config না থাকায় এখন local data হিসেবে রাখা হয়েছে।'
+        : 'ছবি সফলভাবে Upload হয়েছে।',
+      uploaded.localOnly ? 'info' : 'success',
+      uploaded.localOnly ? 6000 : 3500
     );
 
     return image;
@@ -363,6 +399,9 @@ function deleteProductImage(index) {
 function bindImageEvents() {
   const { input, uploadButton, container } = getElements();
 
+  if (!input || !uploadButton || !container) return;
+  if (container.dataset.imageEventsBound === 'true') return;
+
   uploadButton?.addEventListener('click', () => {
     input?.click();
   });
@@ -424,6 +463,8 @@ function bindImageEvents() {
       productImages[index].color = inputElement.value;
     }
   });
+
+  container.dataset.imageEventsBound = 'true';
 }
 
 
@@ -439,7 +480,11 @@ export function getProductImagesData() {
     color: image.color || '',
     order: index + 1,
     width: image.width || 0,
-    height: image.height || 0
+    height: image.height || 0,
+    isMain: image.isMain === true,
+    isHover: image.isHover === true,
+    fileName: image.fileName || '',
+    localOnly: image.localOnly === true
   }));
 }
 
@@ -461,7 +506,9 @@ export function setProductImagesData(images = []) {
       width: image.width || 0,
       height: image.height || 0,
       isMain: image.isMain === true || index === 0,
-      isHover: image.isHover === true
+      isHover: image.isHover === true,
+      fileName: image.fileName || '',
+      localOnly: image.localOnly === true
     })
   );
 
@@ -515,8 +562,8 @@ export function resetProductImages() {
 // INITIALIZE
 // ========================================
 
-export function initProductImages() {
-  if (initialized) return;
+export function initProductImages({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const { container, input, uploadButton } = getElements();
 

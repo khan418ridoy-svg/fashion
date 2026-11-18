@@ -36,14 +36,6 @@ const PRODUCT_FIELDS = {
     label: 'SKU',
     placeholder: 'Auto generated',
     readonly: true
-  },
-
-  slug: {
-    id: 'product-slug',
-    label: 'Product Slug',
-    placeholder: 'product-name',
-    required: true,
-    maxLength: 180
   }
 };
 
@@ -139,8 +131,7 @@ export function renderProductBasic(product = {}) {
     'name',
     'brand',
     'productCode',
-    'sku',
-    'slug'
+    'sku'
   ];
 
   fields.forEach(fieldName => {
@@ -172,45 +163,72 @@ export function renderProductBasic(product = {}) {
 
 export function generateProductSlug(value = '') {
   return String(value)
-    .toLowerCase()
     .trim()
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .replace(/\s+/g, '-')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
     .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
+    .replace(/^-|-$/g, '')
+    .slice(0, 140);
+}
+
+function createUniqueSlug(value, existingSlugs = [], currentSlug = '') {
+  const base = generateProductSlug(value) || 'product';
+  const reserved = new Set(
+    existingSlugs
+      .map(slug => String(slug || '').trim().toLowerCase())
+      .filter(slug => slug && slug !== String(currentSlug).toLowerCase())
+  );
+
+  if (!reserved.has(base)) return base;
+
+  let suffix = 2;
+
+  while (reserved.has(`${base}-${suffix}`)) {
+    suffix += 1;
+  }
+
+  return `${base}-${suffix}`;
 }
 
 // ========================================
 // Bind Product Basic Events
 // ========================================
 
-export function bindProductBasicEvents(container) {
+export function bindProductBasicEvents(container, options = {}) {
   const nameInput = container.querySelector(
     '[data-product-field="name"]'
   );
 
-  const slugInput = container.querySelector(
-    '[data-product-field="slug"]'
-  );
+  const slugInput = container.querySelector('#product-slug');
 
   if (!nameInput || !slugInput) {
     return;
   }
 
-  let slugManuallyChanged = Boolean(slugInput.value);
+  const existingSlugs = Array.isArray(options.existingSlugs)
+    ? options.existingSlugs
+    : [];
+
+  const initialSlug = String(
+    options.currentSlug || slugInput.value || ''
+  ).trim();
+
+  slugInput.readOnly = true;
+  slugInput.dataset.existingSlugs = JSON.stringify(existingSlugs);
+  slugInput.dataset.currentSlug = initialSlug;
 
   function handleNameInput() {
-    if (slugManuallyChanged) {
-      return;
-    }
-
-    slugInput.value = generateProductSlug(
-      nameInput.value
+    slugInput.value = createUniqueSlug(
+      nameInput.value,
+      existingSlugs,
+      initialSlug
     );
-  }
 
-  function handleSlugInput() {
-    slugManuallyChanged = true;
+    slugInput.dispatchEvent(
+      new Event('input', { bubbles: true })
+    );
   }
 
   nameInput.addEventListener(
@@ -218,20 +236,14 @@ export function bindProductBasicEvents(container) {
     handleNameInput
   );
 
-  slugInput.addEventListener(
-    'input',
-    handleSlugInput
-  );
+  if (!slugInput.value && nameInput.value.trim()) {
+    handleNameInput();
+  }
 
   return () => {
     nameInput.removeEventListener(
       'input',
       handleNameInput
-    );
-
-    slugInput.removeEventListener(
-      'input',
-      handleSlugInput
     );
   };
 }

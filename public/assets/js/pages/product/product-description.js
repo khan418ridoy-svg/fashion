@@ -288,8 +288,8 @@ function bindDescriptionEvents() {
 // INITIALIZE
 // ========================================
 
-export function initProductDescription() {
-  if (initialized) return;
+export function initProductDescription({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const elements = getElements();
 

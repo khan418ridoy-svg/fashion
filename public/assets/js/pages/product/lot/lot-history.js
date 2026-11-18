@@ -121,7 +121,7 @@ function getCurrentTotalQuantity() {
 
   // Prefer the Lot Variants module's live total.
   const displayedQuantity = Number(
-    elements.totalQuantity?.textContent || 0
+    elements.totalQuantity?.value || 0
   );
 
   return Number.isFinite(displayedQuantity)
@@ -164,13 +164,11 @@ export function updateLotCostSummary() {
     : 0;
 
   if (elements.totalCost) {
-    elements.totalCost.textContent =
-      `৳ ${formatMoney(totalCost)}`;
+    elements.totalCost.value = formatMoney(totalCost);
   }
 
   if (elements.unitCost) {
-    elements.unitCost.textContent =
-      `৳ ${formatMoney(unitCost)}`;
+    elements.unitCost.value = formatMoney(unitCost);
   }
 
   return {
@@ -340,12 +338,26 @@ function bindEvents() {
     }
   );
 
+  document.removeEventListener(
+    'product:lot-quantity-changed',
+    handleLotQuantityChanged
+  );
   document.addEventListener(
     'product:lot-quantity-changed',
-    () => {
-      updateLotCostSummary();
-    }
+    handleLotQuantityChanged
   );
+}
+
+function handleLotQuantityChanged(event) {
+  const { totalQuantity } = getElements();
+
+  if (totalQuantity) {
+    totalQuantity.value = String(
+      Number(event.detail?.totalQuantity) || 0
+    );
+  }
+
+  updateLotCostSummary();
 }
 
 
@@ -353,8 +365,8 @@ function bindEvents() {
 // INITIALIZE
 // ========================================
 
-export function initLotCost() {
-  if (initialized) return;
+export function initLotCost({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const elements = getElements();
 

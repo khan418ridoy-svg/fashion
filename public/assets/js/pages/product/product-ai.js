@@ -13,6 +13,10 @@ import {
   setProductButtonLoading,
   escapeProductHTML
 } from './product-utils.js';
+import {
+  getProductCategoryData,
+  applyProductTaxonomySuggestion
+} from './product-category.js';
 
 let initialized = false;
 
@@ -41,10 +45,7 @@ const SELECTORS = {
   metaTitle: '#product-meta-title',
   metaDescription: '#product-meta-description',
 
-  generateContent: '#product-ai-content',
-  generateSEO: '#product-ai-seo',
-  generateAttributes: '#product-ai-attributes',
-  generateCategory: '#product-ai-category',
+  generateAll: '#product-ai-generate-all',
 
   preview: '#product-ai-preview',
   previewContent: '#product-ai-preview-content',
@@ -68,14 +69,16 @@ function getElement(name) {
 
 export function getProductAIFacts() {
   const read = name => getElement(name)?.value?.trim() || '';
+  const taxonomy = getProductCategoryData();
 
   return {
     name: read('name'),
     shortDescription: read('shortDescription'),
     description: read('description'),
-    collection: read('collection'),
-    category: read('category'),
-    subcategory: read('subcategory'),
+    taxonomy: taxonomy.assignments,
+    collection: taxonomy.collectionId,
+    category: taxonomy.categoryId,
+    subcategory: taxonomy.subCategoryId,
     fabricType: read('fabricType'),
     fit: read('fit'),
     sleeveType: read('sleeveType'),
@@ -163,6 +166,20 @@ const FIELD_LABELS = {
 // ========================================
 
 const TASK_FIELDS = {
+  all: [
+    'shortDescription',
+    'description',
+    'metaTitle',
+    'metaDescription',
+    'fabricType',
+    'fit',
+    'sleeveType',
+    'washCare',
+    'tags',
+    'collection',
+    'category',
+    'subcategory'
+  ],
   content: [
     'shortDescription',
     'description'
@@ -171,7 +188,6 @@ const TASK_FIELDS = {
   seo: [
     'metaTitle',
     'metaDescription',
-    'slug',
     'tags'
   ],
 
@@ -189,6 +205,34 @@ const TASK_FIELDS = {
     'subcategory'
   ]
 };
+
+async function requestAllProductAI() {
+  const tasks = Object.keys(ENDPOINTS);
+  const results = await Promise.allSettled(
+    tasks.map(task => requestProductAI(task))
+  );
+
+  const merged = {};
+  const errors = [];
+
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled') {
+      Object.assign(merged, result.value);
+    } else {
+      errors.push(`${tasks[index]}: ${result.reason?.message || 'failed'}`);
+    }
+  });
+
+  if (!Object.keys(merged).length) {
+    throw new Error(
+      errors.length
+        ? `AI service unavailable (${errors.join('; ')})`
+        : 'AI কোনো suggestion দেয়নি।'
+    );
+  }
+
+  return merged;
+}
 
 
 // ========================================
@@ -274,7 +318,7 @@ function showAIPreview(task, data) {
 // ========================================
 
 export async function generateProductAISuggestion(task, button = null) {
-  if (!ENDPOINTS[task]) {
+  if (task !== 'all' && !ENDPOINTS[task]) {
     showProductMessage('AI Task সঠিক নয়।', 'error');
     return false;
   }
@@ -284,7 +328,9 @@ export async function generateProductAISuggestion(task, button = null) {
   }
 
   try {
-    const data = await requestProductAI(task);
+    const data = task === 'all'
+      ? await requestAllProductAI()
+      : await requestProductAI(task);
 
     showAIPreview(task, data);
 
@@ -380,8 +426,25 @@ export function acceptProductAISuggestion() {
 
   let applied = 0;
 
+  const taxonomySuggestion = {
+    collection: currentSuggestion.data.collection,
+    category: currentSuggestion.data.category,
+    subcategory: currentSuggestion.data.subcategory
+  };
+
+  if (
+    (taxonomySuggestion.collection || taxonomySuggestion.category) &&
+    applyProductTaxonomySuggestion(taxonomySuggestion)
+  ) {
+    applied++;
+  }
+
   Object.entries(currentSuggestion.data).forEach(
     ([key, value]) => {
+      if (['collection', 'category', 'subcategory'].includes(key)) {
+        return;
+      }
+
       if (applySuggestionField(key, value)) {
         applied++;
       }
@@ -454,8 +517,8 @@ function bindAIButton(name, task) {
 // INITIALIZE
 // ========================================
 
-export function initProductAI() {
-  if (initialized) return;
+export function initProductAI({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const preview = getElement('preview');
   const accept = getElement('accept');
@@ -466,10 +529,7 @@ export function initProductAI() {
     return;
   }
 
-  bindAIButton('generateContent', 'content');
-  bindAIButton('generateSEO', 'seo');
-  bindAIButton('generateAttributes', 'attributes');
-  bindAIButton('generateCategory', 'category');
+  bindAIButton('generateAll', 'all');
 
   accept.addEventListener(
     'click',

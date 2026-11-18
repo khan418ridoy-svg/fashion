@@ -13,6 +13,18 @@ import {
   setProductButtonLoading
 } from '../product-utils.js';
 
+import {
+  getLotVariantsData,
+  validateLotVariants,
+  resetLotVariants
+} from './lot-variants.js';
+
+import {
+  getLotCostData,
+  validateLotCost,
+  resetLotCost
+} from './lot-history.js';
+
 
 // ========================================
 // CONFIGURATION
@@ -98,16 +110,7 @@ export function openLotCreate(productId = currentProductId) {
     return false;
   }
 
-  if (!productId) {
-    showProductMessage(
-      'প্রথমে Product নির্বাচন করুন।',
-      'warning'
-    );
-
-    return false;
-  }
-
-  currentProductId = productId;
+  currentProductId = productId || currentProductId || null;
 
   resetLotCreate();
 
@@ -121,6 +124,14 @@ export function openLotCreate(productId = currentProductId) {
   elements.modal.classList.add('is-open');
 
   elements.modal.setAttribute('aria-hidden', 'false');
+
+  if (!currentProductId) {
+    showProductMessage(
+      'Lot form খোলা হয়েছে। Lot save করতে আগে Product save করে Product ID তৈরি করতে হবে।',
+      'info',
+      6000
+    );
+  }
 
   return true;
 }
@@ -249,6 +260,8 @@ export async function createProductLot() {
   if (isSubmitting) return false;
 
   if (!validateLotCreate()) return false;
+  if (!validateLotVariants()) return false;
+  if (!validateLotCost()) return false;
 
   const elements = getElements();
 
@@ -262,7 +275,9 @@ export async function createProductLot() {
 
   try {
     const payload = {
-      ...getLotCreateData()
+      ...getLotCreateData(),
+      variants: getLotVariantsData(),
+      costs: getLotCostData()
     };
 
     // Lot Number optional:
@@ -335,7 +350,22 @@ export async function createProductLot() {
 export function resetLotCreate() {
   const elements = getElements();
 
-  elements.form?.reset();
+  if (elements.form instanceof HTMLFormElement) {
+    elements.form.reset();
+  } else {
+    elements.form?.querySelectorAll('input, textarea, select').forEach(
+      element => {
+        if (element.type === 'checkbox' || element.type === 'radio') {
+          element.checked = false;
+        } else if (!element.readOnly) {
+          element.value = '';
+        }
+      }
+    );
+  }
+
+  resetLotVariants();
+  resetLotCost();
 
   isSubmitting = false;
 }
@@ -362,6 +392,10 @@ function bindEvents() {
     createProductLot();
   });
 
+  elements.submitButton?.addEventListener('click', () => {
+    createProductLot();
+  });
+
   elements.modal?.addEventListener('click', event => {
     if (event.target === elements.modal) {
       closeLotCreate();
@@ -374,8 +408,8 @@ function bindEvents() {
 // INITIALIZE
 // ========================================
 
-export function initLotCreate() {
-  if (initialized) return;
+export function initLotCreate({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const elements = getElements();
 

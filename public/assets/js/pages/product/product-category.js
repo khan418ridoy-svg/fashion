@@ -1,436 +1,464 @@
-
 'use strict';
 
-// ========================================
-// PRODUCT CATEGORY
-// Collection, Category & Subcategory
-// ========================================
+// Multiple collection/category/subcategory mappings for one product.
 
+import { api } from '../../api.js';
 import {
   getProductElement,
   showProductMessage
 } from './product-utils.js';
 
-
-// ========================================
-// STATE
-// ========================================
-
-let taxonomyData = null;
-let initialized = false;
-
-
-// ========================================
-// SELECTORS
-// ========================================
-
 const SELECTORS = {
-  collection: '#product-collection',
-  category: '#product-category',
-  subCategory: '#product-subcategory'
+  list: '#product-taxonomy-list',
+  addButton: '#add-product-taxonomy'
 };
 
-
-// ========================================
-// GET ELEMENTS
-// ========================================
+let taxonomyCollections = [];
+let initialized = false;
+let rowCounter = 0;
 
 function getElements() {
   return {
-    collection: getProductElement(SELECTORS.collection),
-    category: getProductElement(SELECTORS.category),
-    subCategory: getProductElement(SELECTORS.subCategory)
+    list: getProductElement(SELECTORS.list),
+    addButton: getProductElement(SELECTORS.addButton)
   };
 }
 
-
-// ========================================
-// GET TAXONOMY FROM BACKEND
-// ========================================
-
-async function fetchTaxonomy() {
-  const response = await fetch('/api/taxonomy', {
-    method: 'GET',
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json'
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`Taxonomy load failed: ${response.status}`);
-  }
-
-  const result = await response.json();
-
-  if (result.success === false) {
-    throw new Error(result.message || 'Taxonomy load failed');
-  }
-
-  const data = result.data ?? result.taxonomy ?? result;
-
-  if (!data || typeof data !== 'object') {
-    throw new Error('Invalid taxonomy response');
-  }
-
-  taxonomyData = data;
-
-  return taxonomyData;
-}
-
-
-// ========================================
-// NORMALIZE TAXONOMY
-// ========================================
-
-function getCollections() {
-  if (!taxonomyData) return [];
-
-  const collections = taxonomyData.collections;
-
-  if (Array.isArray(collections)) {
-    return collections;
-  }
-
-  if (collections && typeof collections === 'object') {
-    return Object.entries(collections).map(([id, item]) => ({
-      id,
-      ...item
-    }));
-  }
-
-  return [];
-}
-
-
-function getCategories(collectionId) {
-  if (!taxonomyData) return [];
-
-  const categories = taxonomyData.categories;
-
-  if (Array.isArray(categories)) {
-    return categories.filter(item =>
-      !item.collectionId ||
-      item.collectionId === collectionId
-    );
-  }
-
-  if (categories && typeof categories === 'object') {
-    return Object.entries(categories)
-      .map(([id, item]) => ({
-        id,
-        ...item
-      }))
-      .filter(item =>
-        !item.collectionId ||
-        item.collectionId === collectionId
-      );
-  }
-
-  return [];
-}
-
-
-function getSubCategories(categoryId) {
-  if (!taxonomyData) return [];
-
-  const subCategories = taxonomyData.subcategories ??
-    taxonomyData.subCategories;
-
-  if (Array.isArray(subCategories)) {
-    return subCategories.filter(item =>
-      item.categoryId === categoryId
-    );
-  }
-
-  if (subCategories && typeof subCategories === 'object') {
-    return Object.entries(subCategories)
-      .map(([id, item]) => ({
-        id,
-        ...item
-      }))
-      .filter(item =>
-        item.categoryId === categoryId
-      );
-  }
-
-  return [];
-}
-
-
-// ========================================
-// GET ITEM ID & NAME
-// ========================================
-
 function getItemId(item) {
-  return String(item.id ?? item.collectionId ??
-    item.categoryId ?? item.subCategoryId ?? '');
+  return String(item?.id ?? '').trim();
 }
-
 
 function getItemName(item) {
-  return String(item.name ?? item.title ?? '');
+  return String(item?.name ?? item?.title ?? item?.id ?? '').trim();
 }
 
+function getActiveItems(items) {
+  return Array.isArray(items)
+    ? items.filter(item => item && item.isActive !== false)
+    : [];
+}
 
-// ========================================
-// RENDER SELECT OPTIONS
-// ========================================
+function getCollection(collectionId) {
+  return taxonomyCollections.find(
+    item => getItemId(item) === String(collectionId || '')
+  ) || null;
+}
+
+function getCategories(collectionId) {
+  return getActiveItems(getCollection(collectionId)?.categories);
+}
+
+function getCategory(collectionId, categoryId) {
+  return getCategories(collectionId).find(
+    item => getItemId(item) === String(categoryId || '')
+  ) || null;
+}
+
+function getSubcategories(collectionId, categoryId) {
+  const category = getCategory(collectionId, categoryId);
+
+  return getActiveItems(
+    category?.subCategories ?? category?.subcategories
+  );
+}
 
 function renderOptions(select, items, placeholder, selectedId = '') {
   if (!select) return;
 
   select.replaceChildren();
 
-  const defaultOption = document.createElement('option');
+  const placeholderOption = document.createElement('option');
+  placeholderOption.value = '';
+  placeholderOption.textContent = placeholder;
+  select.appendChild(placeholderOption);
 
-  defaultOption.value = '';
-  defaultOption.textContent = placeholder;
-
-  select.appendChild(defaultOption);
-
-  items.forEach(item => {
+  getActiveItems(items).forEach(item => {
     const id = getItemId(item);
     const name = getItemName(item);
 
-    if (!id || !name || item.isActive === false) return;
+    if (!id || !name) return;
 
     const option = document.createElement('option');
-
     option.value = id;
     option.textContent = name;
-
-    if (id === String(selectedId)) {
-      option.selected = true;
-    }
-
+    option.selected = id === String(selectedId || '');
     select.appendChild(option);
   });
 
-  select.disabled = items.length === 0;
+  select.disabled = select.options.length <= 1;
 }
 
-
-// ========================================
-// LOAD COLLECTIONS
-// ========================================
-
-function loadCollections(selectedId = '') {
-  const { collection } = getElements();
-
-  if (!collection) return;
-
-  renderOptions(
-    collection,
-    getCollections(),
-    'Select Collection',
-    selectedId
-  );
-}
-
-
-// ========================================
-// LOAD CATEGORIES
-// ========================================
-
-function loadCategories(selectedId = '') {
-  const { collection, category } = getElements();
-
-  if (!category) return;
-
-  const collectionId = collection?.value || '';
+function populateCategories(row, selectedId = '') {
+  const collection = row.querySelector('.product-taxonomy-collection');
+  const category = row.querySelector('.product-taxonomy-category');
 
   renderOptions(
     category,
-    collectionId ? getCategories(collectionId) : [],
+    getCategories(collection?.value),
     'Select Category',
     selectedId
   );
-
-  loadSubCategories();
 }
 
-
-// ========================================
-// LOAD SUBCATEGORIES
-// ========================================
-
-function loadSubCategories(selectedId = '') {
-  const { category, subCategory } = getElements();
-
-  if (!subCategory) return;
-
-  const categoryId = category?.value || '';
+function populateSubcategories(row, selectedId = '') {
+  const collection = row.querySelector('.product-taxonomy-collection');
+  const category = row.querySelector('.product-taxonomy-category');
+  const subcategory = row.querySelector('.product-taxonomy-subcategory');
 
   renderOptions(
-    subCategory,
-    categoryId ? getSubCategories(categoryId) : [],
-    'Select Subcategory',
+    subcategory,
+    getSubcategories(collection?.value, category?.value),
+    'Select Subcategory (optional)',
     selectedId
   );
 }
 
+function updateRemoveButtons() {
+  const { list } = getElements();
+  if (!list) return;
 
-// ========================================
-// COLLECTION CHANGE
-// ========================================
+  const rows = list.querySelectorAll('.product-taxonomy-row');
 
-function handleCollectionChange() {
-  const { category, subCategory } = getElements();
-
-  if (category) category.value = '';
-  if (subCategory) subCategory.value = '';
-
-  loadCategories();
+  rows.forEach(row => {
+    const button = row.querySelector('.remove-product-taxonomy');
+    if (button) button.disabled = rows.length === 1;
+  });
 }
 
+function createSelect(className, labelText) {
+  const group = document.createElement('div');
+  group.className = 'form-group';
 
-// ========================================
-// CATEGORY CHANGE
-// ========================================
+  const label = document.createElement('label');
+  label.textContent = labelText;
 
-function handleCategoryChange() {
-  const { subCategory } = getElements();
+  const select = document.createElement('select');
+  select.className = `form-control ${className}`;
 
-  if (subCategory) subCategory.value = '';
-
-  loadSubCategories();
+  group.append(label, select);
+  return { group, select };
 }
 
+function createTaxonomyRow(data = {}) {
+  rowCounter += 1;
 
-// ========================================
-// VALIDATE CATEGORY
-// ========================================
+  const row = document.createElement('div');
+  row.className = 'product-taxonomy-row';
+  row.dataset.taxonomyRowId = String(rowCounter);
+
+  const collectionField = createSelect(
+    'product-taxonomy-collection',
+    'Collection'
+  );
+  const categoryField = createSelect(
+    'product-taxonomy-category',
+    'Category'
+  );
+  const subcategoryField = createSelect(
+    'product-taxonomy-subcategory',
+    'Subcategory'
+  );
+
+  const removeButton = document.createElement('button');
+  removeButton.type = 'button';
+  removeButton.className = 'remove-product-taxonomy';
+  removeButton.dataset.action = 'remove-taxonomy';
+  removeButton.textContent = 'Remove';
+
+  row.append(
+    collectionField.group,
+    categoryField.group,
+    subcategoryField.group,
+    removeButton
+  );
+
+  renderOptions(
+    collectionField.select,
+    taxonomyCollections,
+    'Select Collection',
+    data.collectionId
+  );
+
+  populateCategories(row, data.categoryId);
+  categoryField.select.value = data.categoryId || '';
+
+  populateSubcategories(row, data.subCategoryId ?? data.subcategoryId);
+  subcategoryField.select.value =
+    data.subCategoryId ?? data.subcategoryId ?? '';
+
+  return row;
+}
+
+export function addProductTaxonomy(data = {}) {
+  const { list } = getElements();
+  if (!list) return null;
+
+  const row = createTaxonomyRow(data);
+  list.appendChild(row);
+  updateRemoveButtons();
+  return row;
+}
+
+function readTaxonomyRow(row) {
+  return {
+    collectionId:
+      row.querySelector('.product-taxonomy-collection')?.value || '',
+    categoryId:
+      row.querySelector('.product-taxonomy-category')?.value || '',
+    subCategoryId:
+      row.querySelector('.product-taxonomy-subcategory')?.value || ''
+  };
+}
+
+function normalizeAssignments(data = {}) {
+  const direct =
+    data.assignments ?? data.taxonomyAssignments ?? data.taxonomies;
+
+  if (Array.isArray(direct)) {
+    return direct.map(item => ({
+      collectionId: String(item?.collectionId || ''),
+      categoryId: String(item?.categoryId || ''),
+      subCategoryId: String(
+        item?.subCategoryId ?? item?.subcategoryId ?? ''
+      )
+    }));
+  }
+
+  if (Array.isArray(data.collectionIds)) {
+    return data.collectionIds.map((collectionId, index) => ({
+      collectionId: String(collectionId || ''),
+      categoryId: String(data.categoryIds?.[index] || ''),
+      subCategoryId: String(data.subCategoryIds?.[index] || '')
+    }));
+  }
+
+  if (data.collectionId || data.categoryId || data.subCategoryId) {
+    return [{
+      collectionId: String(data.collectionId || ''),
+      categoryId: String(data.categoryId || ''),
+      subCategoryId: String(
+        data.subCategoryId ?? data.subcategoryId ?? ''
+      )
+    }];
+  }
+
+  return [];
+}
+
+export function getProductCategoryData() {
+  const { list } = getElements();
+
+  const assignments = list
+    ? Array.from(
+        list.querySelectorAll('.product-taxonomy-row'),
+        readTaxonomyRow
+      ).filter(item => item.collectionId || item.categoryId)
+    : [];
+
+  const first = assignments[0] || {};
+
+  return {
+    assignments,
+    collectionIds: assignments.map(item => item.collectionId),
+    categoryIds: assignments.map(item => item.categoryId),
+    subCategoryIds: assignments.map(item => item.subCategoryId),
+    collectionId: first.collectionId || '',
+    categoryId: first.categoryId || '',
+    subCategoryId: first.subCategoryId || ''
+  };
+}
+
+export function setProductCategoryData(data = {}) {
+  const { list } = getElements();
+  if (!list) return;
+
+  list.replaceChildren();
+  const assignments = normalizeAssignments(data);
+
+  (assignments.length ? assignments : [{}]).forEach(addProductTaxonomy);
+  updateRemoveButtons();
+}
+
+function findTaxonomyItem(items, value) {
+  const target = String(value || '').trim().toLowerCase();
+  if (!target) return null;
+
+  return getActiveItems(items).find(item => {
+    return getItemId(item).toLowerCase() === target ||
+      getItemName(item).toLowerCase() === target;
+  }) || null;
+}
+
+export function applyProductTaxonomySuggestion(data = {}) {
+  const collection = findTaxonomyItem(
+    taxonomyCollections,
+    data.collectionId ?? data.collection
+  );
+
+  if (!collection) return false;
+
+  const category = findTaxonomyItem(
+    collection.categories,
+    data.categoryId ?? data.category
+  );
+
+  if (!category) return false;
+
+  const subcategory = findTaxonomyItem(
+    category.subCategories ?? category.subcategories,
+    data.subCategoryId ?? data.subcategory
+  );
+
+  const suggestion = {
+    collectionId: getItemId(collection),
+    categoryId: getItemId(category),
+    subCategoryId: getItemId(subcategory)
+  };
+
+  const current = getProductCategoryData().assignments;
+  setProductCategoryData({
+    assignments: [...current, suggestion]
+  });
+
+  return true;
+}
 
 export function validateProductCategory() {
-  const { collection, category, subCategory } = getElements();
+  const { list } = getElements();
+  const rows = list?.querySelectorAll('.product-taxonomy-row') || [];
 
-  if (!collection || !category || !subCategory) {
-    showProductMessage(
-      'Category form elements পাওয়া যায়নি।',
-      'error'
-    );
-
+  if (!rows.length) {
+    showProductMessage('কমপক্ষে একটি taxonomy যোগ করুন।', 'warning');
     return false;
   }
 
-  if (!collection.value) {
-    showProductMessage('Collection নির্বাচন করুন।', 'warning');
-    collection.focus();
-    return false;
-  }
+  const seen = new Set();
 
-  if (!category.value) {
-    showProductMessage('Category নির্বাচন করুন।', 'warning');
-    category.focus();
-    return false;
+  for (const row of rows) {
+    const data = readTaxonomyRow(row);
+
+    if (!data.collectionId) {
+      showProductMessage('Collection নির্বাচন করুন।', 'warning');
+      row.querySelector('.product-taxonomy-collection')?.focus();
+      return false;
+    }
+
+    if (!data.categoryId) {
+      showProductMessage('Category নির্বাচন করুন।', 'warning');
+      row.querySelector('.product-taxonomy-category')?.focus();
+      return false;
+    }
+
+    const key = [
+      data.collectionId,
+      data.categoryId,
+      data.subCategoryId
+    ].join('::');
+
+    if (seen.has(key)) {
+      showProductMessage('একই taxonomy একাধিকবার দেওয়া যাবে না।', 'warning');
+      return false;
+    }
+
+    seen.add(key);
   }
 
   return true;
 }
 
+function bindEvents() {
+  const { list, addButton } = getElements();
+  if (!list || !addButton) return;
 
-// ========================================
-// GET CATEGORY DATA
-// ========================================
+  if (list.dataset.taxonomyEventsBound === 'true') return;
 
-export function getProductCategoryData() {
-  const { collection, category, subCategory } = getElements();
+  addButton.addEventListener('click', () => addProductTaxonomy());
 
-  return {
-    collectionId: collection?.value || '',
-    categoryId: category?.value || '',
-    subCategoryId: subCategory?.value || ''
-  };
+  list.addEventListener('change', event => {
+    const row = event.target.closest('.product-taxonomy-row');
+    if (!row) return;
+
+    if (event.target.matches('.product-taxonomy-collection')) {
+      populateCategories(row);
+      populateSubcategories(row);
+    }
+
+    if (event.target.matches('.product-taxonomy-category')) {
+      populateSubcategories(row);
+    }
+  });
+
+  list.addEventListener('click', event => {
+    const button = event.target.closest('[data-action="remove-taxonomy"]');
+    if (!button || button.disabled) return;
+
+    button.closest('.product-taxonomy-row')?.remove();
+    updateRemoveButtons();
+  });
+
+  list.dataset.taxonomyEventsBound = 'true';
 }
 
+async function loadTaxonomy({ forceRefresh = false } = {}) {
+  const response = await api.taxonomy.load({ forceRefresh });
 
-// ========================================
-// SET CATEGORY DATA (EDIT PRODUCT)
-// ========================================
+  if (!Array.isArray(response?.collections)) {
+    throw new Error('Invalid taxonomy data received from the server.');
+  }
 
-export function setProductCategoryData(data = {}) {
-  const { collection, category, subCategory } = getElements();
-
-  if (!collection || !category || !subCategory) return;
-
-  collection.value = data.collectionId || '';
-
-  loadCategories(data.categoryId || '');
-
-  category.value = data.categoryId || '';
-
-  loadSubCategories(data.subCategoryId || '');
-
-  subCategory.value = data.subCategoryId || '';
+  taxonomyCollections = response.collections;
+  return taxonomyCollections;
 }
 
+export async function initProductCategory({ force = false } = {}) {
+  if (initialized && !force) return true;
 
-// ========================================
-// INITIALIZE
-// ========================================
+  const { list, addButton } = getElements();
 
-export async function initProductCategory() {
-  if (initialized) return;
-
-  const elements = getElements();
-
-  if (!elements.collection ||
-      !elements.category ||
-      !elements.subCategory) {
-    console.warn(
-      '[PRODUCT CATEGORY] Required select elements not found.'
-    );
-    return;
+  if (!list || !addButton) {
+    console.warn('[PRODUCT TAXONOMY] Required elements not found.');
+    return false;
   }
 
   try {
-    await fetchTaxonomy();
+    await loadTaxonomy();
+    bindEvents();
 
-    loadCollections();
-
-    elements.collection.addEventListener(
-      'change',
-      handleCollectionChange
-    );
-
-    elements.category.addEventListener(
-      'change',
-      handleCategoryChange
-    );
+    if (!list.children.length) addProductTaxonomy();
 
     initialized = true;
-
-  } catch (error) {
-    console.error('[PRODUCT CATEGORY]', error);
-
-    showProductMessage(
-      'Collection ও Category load করা যায়নি।',
-      'error'
-    );
-  }
-}
-
-
-// ========================================
-// REFRESH TAXONOMY
-// ========================================
-
-export async function refreshProductTaxonomy() {
-  try {
-    await fetchTaxonomy();
-    loadCollections();
-
     return true;
-
   } catch (error) {
-    console.error('[PRODUCT CATEGORY] Refresh failed:', error);
-
+    console.error('[PRODUCT TAXONOMY]', error);
     showProductMessage(
-      'Taxonomy refresh করা যায়নি।',
-      'error'
+      error.message || 'Collection, category ও subcategory load করা যায়নি।',
+      'error',
+      6000
     );
-
     return false;
   }
 }
+
+export async function refreshProductTaxonomy() {
+  try {
+    const current = getProductCategoryData();
+    await loadTaxonomy({ forceRefresh: true });
+    setProductCategoryData(current);
+    return true;
+  } catch (error) {
+    console.error('[PRODUCT TAXONOMY] Refresh failed:', error);
+    showProductMessage('Taxonomy refresh করা যায়নি।', 'error');
+    return false;
+  }
+}
+
+export function resetProductCategory() {
+  setProductCategoryData({});
+}
+
+export function cleanupProductCategory() {
+  initialized = false;
+  rowCounter = 0;
+}
+
+export default initProductCategory;

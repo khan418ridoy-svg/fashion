@@ -459,8 +459,8 @@ function bindEvents() {
 // INITIALIZE
 // ========================================
 
-export function initLotVariants() {
-  if (initialized) return;
+export function initLotVariants({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const elements = getElements();
 

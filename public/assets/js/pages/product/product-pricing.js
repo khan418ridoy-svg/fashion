@@ -105,7 +105,6 @@ function updateDiscount() {
 
   const regular = getNumericValue(regularPrice);
   const selling = getNumericValue(sellingPrice);
-
   const discount = calculateProductDiscount(
     regular,
     selling
@@ -136,6 +135,14 @@ export function validateProductPricing() {
 
   const regular = getNumericValue(regularPrice);
   const selling = getNumericValue(sellingPrice);
+  const hasVariants = Boolean(
+    getProductElement('.product-variant-item')
+  );
+
+  // Variant-wise pricing can fully replace the product-level defaults.
+  if (hasVariants && regular === 0 && selling === 0) {
+    return true;
+  }
 
   if (regular <= 0) {
     showProductMessage(
@@ -252,8 +259,8 @@ function bindPricingEvents() {
 
 let initialized = false;
 
-export function initProductPricing() {
-  if (initialized) return;
+export function initProductPricing({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const {
     regularPrice,

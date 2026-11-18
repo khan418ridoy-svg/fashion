@@ -434,7 +434,7 @@ export function resetProductLots() {
   }
 
   if (elements.container) {
-    elements.container.replaceChildren();
+    renderProductLots();
   }
 }
 
@@ -443,8 +443,8 @@ export function resetProductLots() {
 // INITIALIZE
 // ========================================
 
-export function initProductLots() {
-  if (initialized) return;
+export function initProductLots({ force = false } = {}) {
+  if (initialized && !force) return;
 
   const elements = getElements();
 

@@ -704,26 +704,31 @@ function bindEvents() {
     }
   });
 
+  document.removeEventListener(
+    'product:lot-history',
+    handleOpenLotHistory
+  );
   document.addEventListener(
     'product:lot-history',
-    event => {
-      const detail = event.detail || {};
-
-      openLotHistory(
-        detail.productId,
-        detail.lotId
-      );
-    }
+    handleOpenLotHistory
   );
 
-  document.addEventListener('keydown', event => {
-    if (
-      event.key === 'Escape' &&
-      !elements.modal?.hidden
-    ) {
-      closeLotHistory();
-    }
-  });
+  document.removeEventListener('keydown', handleHistoryKeydown);
+  document.addEventListener('keydown', handleHistoryKeydown);
+}
+
+function handleOpenLotHistory(event) {
+  const detail = event.detail || {};
+
+  openLotHistory(detail.productId, detail.lotId);
+}
+
+function handleHistoryKeydown(event) {
+  const { modal } = getElements();
+
+  if (event.key === 'Escape' && !modal?.hidden) {
+    closeLotHistory();
+  }
 }
 
 
@@ -731,8 +736,8 @@ function bindEvents() {
 // INITIALIZE
 // ========================================
 
-export function initLotHistory() {
-  if (initialized) return;
+export function initLotHistory({ force = false } = {}) {
+  if (initialized && !force) return;
 
   bindEvents();
 

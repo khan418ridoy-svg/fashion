@@ -15,6 +15,8 @@ export function getProductRoot() {
   return (
     document.querySelector('#product-page') ||
     document.querySelector('.product-page') ||
+    document.querySelector('#product-form-page') ||
+    document.querySelector('#products-page') ||
     document
   );
 }
@@ -74,7 +76,13 @@ export function showProductMessage(
   element.setAttribute('role', 'status');
   element.textContent = text;
 
-  document.body.appendChild(element);
+  const root = getProductRoot();
+
+  if (root === document) {
+    document.body.appendChild(element);
+  } else {
+    root.prepend(element);
+  }
 
   requestAnimationFrame(() => {
     element.classList.add('is-visible');
