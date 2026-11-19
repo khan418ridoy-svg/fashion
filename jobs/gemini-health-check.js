@@ -20,11 +20,15 @@ async function runGeminiHealthCheck() {
 
   if (result.success) {
     console.log('[Gemini Health Check] SUCCESS');
-    console.log('Model:', result.model);
-    console.log('Response:', result.response);
+    console.log('First successful model:', result.model);
+    console.log('First successful response:', result.response);
+    console.log('Tested combinations:', result.testedCombinations);
+    console.log('Successful combinations:', result.successfulAttempts);
+    console.log('Failed combinations:', result.failedAttempts);
   } else {
     console.error('[Gemini Health Check] FAILED');
     console.error('Error:', result.error);
+    console.error('Tested combinations:', result.testedCombinations || 0);
   }
 
   console.log('========================================');

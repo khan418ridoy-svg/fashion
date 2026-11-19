@@ -2,8 +2,10 @@
 
 import {
   renderProductBasic,
-  bindProductBasicEvents
+  bindProductBasicEvents,
+  setProductBasicData
 } from './product-basic.js';
+
 import {
   initProductCategory,
   validateProductCategory,
@@ -119,11 +121,19 @@ import {
 // STATE
 // ========================================
 
+// ========================================
+// STATE
+// ========================================
+
 let initialized = false;
 let currentProductId = null;
 let activeContainer = null;
 let basicEventsCleanup = null;
+let resetButtonRef = null;
 let isSaving = false;
+let saveReviewPromise = null;
+let saveReviewResolver = null;
+let saveReviewPreviousFocus = null;
 
 // ========================================
 // HTML HELPERS
@@ -866,6 +876,34 @@ function renderProductFormMarkup() {
           </div>
         </div>
 
+        <!-- PRODUCT SAVE REVIEW MODAL -->
+        <div class="product-modal-overlay product-save-review-overlay"
+          id="product-save-review-modal" hidden aria-hidden="true">
+          <div class="product-modal product-save-review-modal"
+            role="dialog" aria-modal="true"
+            aria-labelledby="product-save-review-title"
+            aria-describedby="product-save-review-subtitle">
+
+            <div class="product-modal-header">
+              <h3 id="product-save-review-title">Review Product Before Save</h3>
+              <p id="product-save-review-subtitle">
+                Check the information below. Nothing is saved until you confirm.
+              </p>
+            </div>
+
+            <div class="product-save-review-content"
+              id="product-save-review-content"></div>
+
+            <div class="product-modal-actions product-save-review-actions">
+              <button type="button" class="btn btn-secondary"
+                id="product-save-review-cancel">Edit Product</button>
+
+              <button type="button" class="btn btn-primary"
+                id="product-save-review-confirm">Confirm &amp; Save</button>
+            </div>
+          </div>
+        </div>
+
         <!-- FORM ACTIONS -->
         <div class="product-form-actions">
           <button type="button" class="btn btn-secondary"
@@ -917,28 +955,64 @@ function hydrateProductModules(product = {}) {
   const variants = Array.isArray(product.variants)
     ? product.variants
     : [];
-  const descriptionData =
-    product.description && typeof product.description === 'object'
-      ? product.description
-      : product;
 
+  // Canonical taxonomy first; legacy data only as fallback.
   setProductCategoryData(
-    product.category || product.taxonomy || product
+    Array.isArray(product.assignments)
+      ? { assignments: product.assignments }
+      : product.category || product.taxonomy || product
   );
-  setProductPricingData(product.pricing || product);
+
+  setProductPricingData(
+    product.pricing ||
+    (
+      product.regularPrice !== undefined ||
+      product.sellingPrice !== undefined
+        ? product
+        : variants[0] || product
+    )
+  );
+
   setProductVariantsData(variants);
+
   setProductInventoryData({
     ...(product.inventory || product),
     variants
   });
-  setProductImagesData(product.images || []);
-  setProductDescriptionData(descriptionData);
+
+  setProductImagesData(
+    Array.isArray(product.images) ? product.images : []
+  );
+
+  // Keep short and full descriptions independent.
+  setProductDescriptionData({
+    shortDescription: product.shortDescription ?? '',
+    description: typeof product.description === 'string'
+      ? product.description
+      : product.description?.full ??
+        product.description?.description ??
+        '',
+    ...(product.attributes || {})
+  });
+
   setProductSEOData(product.seo || product);
+
   setProductCostData(product.cost || product);
+
   setProductFlagsData(product.flags || product);
-  setProductReviewData(product.review || product);
+
+  // Canonical stats with legacy review fallback.
+  setProductReviewData(product.stats || product.review || product);
+
   renderProductReview();
 }
+
+
+
+
+
+
+
 
 export async function initProductForm({
   container,
@@ -952,12 +1026,24 @@ export async function initProductForm({
     return false;
   }
 
-  if (initialized && activeContainer === container) {
+  const nextProductId = productId || null;
+
+  // একই Product এবং একই container হলে পুনরায় initialize করার দরকার নেই।
+  if (
+    initialized &&
+    activeContainer === container &&
+    currentProductId === nextProductId
+  ) {
     return true;
   }
 
+  // আগের form থাকলে তার event listener ও module cleanup করুন।
+  if (activeContainer) {
+    cleanupProductForm();
+  }
+
   activeContainer = container;
-  currentProductId = productId || null;
+  currentProductId = nextProductId;
 
   const form = container.querySelector('#product-form');
   const idInput = container.querySelector('#product-id');
@@ -980,10 +1066,13 @@ export async function initProductForm({
     form.addEventListener('submit', handleFormSubmit);
   }
 
-  if (resetButton) {
-    resetButton.addEventListener('click', handleReset);
-  }
+  bindSaveReviewEvents();
 
+  resetButtonRef = resetButton;
+
+  if (resetButtonRef) {
+    resetButtonRef.addEventListener('click', handleReset);
+  }
   if (submitButton) {
     submitButton.type = 'submit';
     submitButton.textContent = currentProductId
@@ -1017,11 +1106,17 @@ export async function initProductForm({
 
   await initProductCategory({ force: true });
 
-  hydrateProductModules(product || {});
+hydrateProductModules(product || {});
 
-  if (currentProductId) {
-    await loadProductCost(currentProductId);
+if (currentProductId) {
+  const loaded = await loadProductData(currentProductId);
+
+  if (!loaded) {
+    console.error(
+      '[PRODUCT FORM] Latest Product data could not be loaded.'
+    );
   }
+}
 
   basicEventsCleanup?.();
   basicEventsCleanup = bindProductBasicEvents(container, {
@@ -1084,6 +1179,367 @@ export function validateProductForm() {
 }
 
 // ========================================
+// SAVE REVIEW
+// ========================================
+
+function formatReviewMoney(value) {
+  const number = Number(value);
+
+  return new Intl.NumberFormat('en-BD', {
+    style: 'currency',
+    currency: 'BDT',
+    maximumFractionDigits: 2
+  }).format(Number.isFinite(number) ? number : 0);
+}
+
+function formatReviewNumber(value) {
+  const number = Number(value);
+
+  return new Intl.NumberFormat('en-BD').format(
+    Number.isFinite(number) ? number : 0
+  );
+}
+
+function reviewValue(value, fallback = 'Not provided') {
+  const text = String(value ?? '').trim();
+
+  return text || fallback;
+}
+
+function getSelectedOptionText(row, selector, fallback = '') {
+  const select = row?.querySelector(selector);
+  const option = select?.selectedOptions?.[0];
+  const text = String(option?.textContent || '').trim();
+
+  return text && !text.toLowerCase().startsWith('select ')
+    ? text
+    : fallback;
+}
+
+function getReviewAssignments(assignments = []) {
+  const rows = activeContainer
+    ? Array.from(
+        activeContainer.querySelectorAll('.product-taxonomy-row')
+      )
+    : [];
+
+  return (Array.isArray(assignments) ? assignments : []).map(
+    (assignment, index) => {
+      const row = rows[index];
+
+      return {
+        collection: getSelectedOptionText(
+          row,
+          '.product-taxonomy-collection',
+          assignment.collectionId
+        ),
+        category: getSelectedOptionText(
+          row,
+          '.product-taxonomy-category',
+          assignment.categoryId
+        ),
+        subCategory: getSelectedOptionText(
+          row,
+          '.product-taxonomy-subcategory',
+          assignment.subCategoryId
+        )
+      };
+    }
+  );
+}
+
+function reviewDetail(label, value) {
+  return `
+    <div class="product-save-review-detail">
+      <span>${escapeHTML(label)}</span>
+      <strong>${escapeHTML(reviewValue(value))}</strong>
+    </div>
+  `;
+}
+
+function renderProductSaveReview(data, isUpdate) {
+  const content = activeContainer?.querySelector(
+    '#product-save-review-content'
+  );
+
+  if (!content) return false;
+
+  const basic = data.basic || {};
+  const category = data.category || {};
+  const pricing = data.pricing || {};
+  const inventory = data.inventory || {};
+  const description = data.description || {};
+  const seo = data.seo || {};
+  const cost = data.cost || {};
+  const flags = data.flags || {};
+  const variants = Array.isArray(data.variants) ? data.variants : [];
+  const images = Array.isArray(data.images) ? data.images : [];
+  const assignments = getReviewAssignments(category.assignments);
+  const mainImage = images.find(image => image?.isMain === true) || images[0];
+  const tags = Array.isArray(description.tags) ? description.tags : [];
+  const enabledFlags = [
+    flags.isFeatured ? 'Featured' : '',
+    flags.isBestSeller ? 'Best Seller' : '',
+    flags.isNewArrival ? 'New Arrival' : ''
+  ].filter(Boolean);
+  const variantRows = variants.length
+    ? variants.map((variant, index) => `
+        <tr>
+          <td>${index + 1}</td>
+          <td>
+            <strong>${escapeHTML(reviewValue(variant.color, 'Default'))}</strong>
+            <small>${escapeHTML(reviewValue(variant.size, 'Default'))}</small>
+          </td>
+          <td>${escapeHTML(reviewValue(variant.variantSku, 'Auto-generated'))}</td>
+          <td>${escapeHTML(formatReviewMoney(variant.regularPrice))}</td>
+          <td>${escapeHTML(formatReviewMoney(variant.sellingPrice))}</td>
+          <td>${escapeHTML(formatReviewNumber(variant.stock))}</td>
+          <td>${escapeHTML(formatReviewMoney(variant.effectiveBuyPrice))}</td>
+        </tr>
+      `).join('')
+    : `
+        <tr>
+          <td colspan="7" class="product-save-review-empty">
+            No variants added. Product-level pricing will be used.
+          </td>
+        </tr>
+      `;
+  const assignmentItems = assignments.length
+    ? assignments.map((assignment, index) => `
+        <li>
+          <span>${index + 1}</span>
+          <div>
+            <strong>${escapeHTML(reviewValue(assignment.collection))}</strong>
+            <small>
+              ${escapeHTML(reviewValue(assignment.category))}
+              ${assignment.subCategory
+                ? ` / ${escapeHTML(assignment.subCategory)}`
+                : ''}
+            </small>
+          </div>
+        </li>
+      `).join('')
+    : '<li class="product-save-review-empty">No taxonomy assignment.</li>';
+
+  content.innerHTML = `
+    <div class="product-save-review-hero">
+      <div class="product-save-review-image">
+        ${mainImage?.url
+          ? `<img src="${escapeHTML(mainImage.url)}"
+              alt="${escapeHTML(mainImage.alt || basic.name || 'Product image')}">`
+          : '<span>No image</span>'}
+      </div>
+
+      <div class="product-save-review-heading">
+        <span class="product-save-review-mode">
+          ${isUpdate ? 'Updating Product' : 'Creating Product'}
+        </span>
+        <h4>${escapeHTML(reviewValue(basic.name, 'Unnamed Product'))}</h4>
+        <p>
+          SKU: ${escapeHTML(reviewValue(basic.sku, 'Auto-generated'))}
+          &nbsp;•&nbsp;
+          Code: ${escapeHTML(reviewValue(basic.productCode, 'Not provided'))}
+        </p>
+        <div class="product-save-review-tags">
+          ${(enabledFlags.length ? enabledFlags : ['No special flags'])
+            .map(flag => `<span>${escapeHTML(flag)}</span>`)
+            .join('')}
+        </div>
+      </div>
+    </div>
+
+    <div class="product-save-review-stats">
+      <div><span>Selling Price</span><strong>${escapeHTML(formatReviewMoney(pricing.sellingPrice))}</strong></div>
+      <div><span>Total Stock</span><strong>${escapeHTML(formatReviewNumber(inventory.totalStock))}</strong></div>
+      <div><span>Variants</span><strong>${escapeHTML(formatReviewNumber(variants.length))}</strong></div>
+      <div><span>Images</span><strong>${escapeHTML(formatReviewNumber(images.length))}</strong></div>
+    </div>
+
+    <div class="product-save-review-grid">
+      <section>
+        <h5>Basic Information</h5>
+        ${reviewDetail('Brand', basic.brand)}
+        ${reviewDetail('Barcode', basic.barcode)}
+        ${reviewDetail('Slug', seo.slug || basic.slug)}
+        ${reviewDetail('Regular Price', formatReviewMoney(pricing.regularPrice))}
+      </section>
+
+      <section>
+        <h5>Purchase Information</h5>
+        ${reviewDetail('Default Buy Price', formatReviewMoney(cost.buyPrice))}
+        ${reviewDetail('Supplier', cost.supplier)}
+        ${reviewDetail('Purchase Note', cost.purchaseNote)}
+        ${reviewDetail('Low-stock Variants', inventory.lowStockCount)}
+      </section>
+
+      <section class="product-save-review-taxonomy">
+        <h5>Category Assignments</h5>
+        <ul>${assignmentItems}</ul>
+      </section>
+
+      <section>
+        <h5>SEO</h5>
+        ${reviewDetail('Meta Title', seo.metaTitle)}
+        ${reviewDetail('Meta Description', seo.metaDescription)}
+        ${reviewDetail('Tags', tags.join(', '))}
+      </section>
+    </div>
+
+    <section class="product-save-review-section">
+      <h5>Variants &amp; Stock</h5>
+      <div class="product-save-review-table-wrap">
+        <table class="product-save-review-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Variant</th>
+              <th>SKU</th>
+              <th>Regular</th>
+              <th>Selling</th>
+              <th>Stock</th>
+              <th>Buy Rate</th>
+            </tr>
+          </thead>
+          <tbody>${variantRows}</tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="product-save-review-section product-save-review-description">
+      <h5>Descriptions</h5>
+      <div>
+        <strong>Short Description</strong>
+        <p>${escapeHTML(reviewValue(description.shortDescription))}</p>
+      </div>
+      <div>
+        <strong>Full Description</strong>
+        <p>${escapeHTML(reviewValue(description.description))}</p>
+      </div>
+    </section>
+  `;
+
+  return true;
+}
+
+function settleProductSaveReview(confirmed) {
+  const modal = activeContainer?.querySelector(
+    '#product-save-review-modal'
+  );
+  const resolver = saveReviewResolver;
+  const previousFocus = saveReviewPreviousFocus;
+
+  modal?.classList.remove('is-open');
+  if (modal) {
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+  }
+
+  saveReviewPromise = null;
+  saveReviewResolver = null;
+  saveReviewPreviousFocus = null;
+
+  resolver?.(confirmed === true);
+
+  if (!confirmed && previousFocus instanceof HTMLElement) {
+    window.setTimeout(() => previousFocus.focus(), 0);
+  }
+}
+
+function openProductSaveReview(data, isUpdate) {
+  if (saveReviewPromise) {
+    return saveReviewPromise;
+  }
+
+  const modal = activeContainer?.querySelector(
+    '#product-save-review-modal'
+  );
+  const title = activeContainer?.querySelector(
+    '#product-save-review-title'
+  );
+  const confirmButton = activeContainer?.querySelector(
+    '#product-save-review-confirm'
+  );
+
+  if (!modal || !renderProductSaveReview(data, isUpdate)) {
+    showProductMessage('Product review modal could not be opened.', 'error');
+    return Promise.resolve(false);
+  }
+
+  if (title) {
+    title.textContent = isUpdate
+      ? 'Review Product Changes'
+      : 'Review Product Before Save';
+  }
+
+  if (confirmButton) {
+    confirmButton.textContent = isUpdate
+      ? 'Confirm & Update'
+      : 'Confirm & Save';
+  }
+
+  saveReviewPreviousFocus = document.activeElement;
+  modal.hidden = false;
+  modal.classList.add('is-open');
+  modal.setAttribute('aria-hidden', 'false');
+
+  saveReviewPromise = new Promise(resolve => {
+    saveReviewResolver = resolve;
+  });
+
+  window.setTimeout(() => confirmButton?.focus(), 0);
+
+  return saveReviewPromise;
+}
+
+function handleSaveReviewClick(event) {
+  const modal = activeContainer?.querySelector(
+    '#product-save-review-modal'
+  );
+
+  if (!modal || modal.hidden) return;
+
+  if (
+    event.target === modal ||
+    event.target.closest('#product-save-review-cancel')
+  ) {
+    settleProductSaveReview(false);
+    return;
+  }
+
+  if (event.target.closest('#product-save-review-confirm')) {
+    settleProductSaveReview(true);
+  }
+}
+
+function handleSaveReviewKeydown(event) {
+  if (
+    event.key === 'Escape' &&
+    !activeContainer?.querySelector('#product-save-review-modal')?.hidden
+  ) {
+    event.preventDefault();
+    settleProductSaveReview(false);
+  }
+}
+
+function bindSaveReviewEvents() {
+  const modal = activeContainer?.querySelector(
+    '#product-save-review-modal'
+  );
+
+  modal?.addEventListener('click', handleSaveReviewClick);
+  modal?.addEventListener('keydown', handleSaveReviewKeydown);
+}
+
+function unbindSaveReviewEvents() {
+  const modal = activeContainer?.querySelector(
+    '#product-save-review-modal'
+  );
+
+  modal?.removeEventListener('click', handleSaveReviewClick);
+  modal?.removeEventListener('keydown', handleSaveReviewKeydown);
+}
+
+// ========================================
 // SUBMIT
 // ========================================
 
@@ -1095,7 +1551,8 @@ async function handleFormSubmit(event) {
 
 export async function saveProductForm({
   showSuccess = true,
-  redirectToIndex = showSuccess
+  redirectToIndex = showSuccess,
+  reviewBeforeSave = true
 } = {}) {
 
   if (isSaving) return false;
@@ -1112,7 +1569,19 @@ export async function saveProductForm({
     '#product-form-submit'
   );
   const isUpdate = Boolean(currentProductId);
+  const formData = getProductFormData();
   const payload = getProductSavePayload();
+
+  if (reviewBeforeSave) {
+    const confirmed = await openProductSaveReview(
+      formData,
+      isUpdate
+    );
+
+    if (!confirmed || isSaving) {
+      return false;
+    }
+  }
 
   isSaving = true;
   setProductButtonLoading(
@@ -1281,23 +1750,101 @@ function handleReset() {
 // LOAD PRODUCT DATA
 // ========================================
 
+// ========================================
+// LOAD PRODUCT DATA
+// ========================================
+
 export async function loadProductData(productId = null) {
   if (!productId) {
     resetProductForm();
     return false;
   }
 
-  console.warn(
-    '[PRODUCT FORM] Product load API response contract is not yet verified.',
-    productId
-  );
+  try {
+    const result = await productApiRequest(
+      `/api/products/${encodeURIComponent(productId)}`,
+      {
+        method: 'GET'
+      }
+    );
 
-  return false;
+    const product =
+      result.product ||
+      result.data?.product ||
+      result.data;
+
+    if (
+      !product ||
+      typeof product !== 'object' ||
+      Array.isArray(product)
+    ) {
+      throw new Error('Invalid Product data received.');
+    }
+
+    const loadedProductId = String(
+      product.id || product.productId || ''
+    );
+
+    if (
+      loadedProductId &&
+      loadedProductId !== String(productId)
+    ) {
+      throw new Error('Product ID mismatch.');
+    }
+
+    currentProductId = String(productId);
+
+    // Basic Information
+    setProductBasicData(product, activeContainer);
+
+    // All other Product Modules
+    hydrateProductModules(product);
+
+    // Synchronize hidden Product ID
+    const idInput = activeContainer?.querySelector('#product-id');
+
+    if (idInput) {
+      idInput.value = currentProductId;
+    }
+
+    if (activeContainer) {
+      activeContainer.dataset.productId = currentProductId;
+    }
+
+    console.info(
+      '[PRODUCT FORM] Product loaded successfully:',
+      currentProductId
+    );
+
+    return product;
+
+  } catch (error) {
+    console.error('[PRODUCT FORM LOAD]', error);
+
+    showProductMessage(
+      error.message || 'Product data load করা যায়নি।',
+      'error',
+      7000
+    );
+
+    return false;
+  }
 }
 
 // ========================================
 // GET FORM DATA
 // ========================================
+
+function getActiveProductElement(selector) {
+  if (!activeContainer || !selector) {
+    return null;
+  }
+
+  return getProductElement(selector, activeContainer);
+}
+
+
+
 
 export function getProductFormData() {
   const cost = getProductCostData();
@@ -1309,13 +1856,13 @@ export function getProductFormData() {
 
   return {
     productId: currentProductId || '',
-    basic: {
-      name: getProductElement('#product-name')?.value?.trim() || '',
-      brand: getProductElement('#product-brand')?.value?.trim() || '',
-      productCode: getProductElement('#product-code')?.value?.trim() || '',
-      barcode: getProductElement('#product-barcode')?.value?.trim() || '',
-      sku: getProductElement('#product-sku')?.value?.trim() || '',
-      slug: getProductElement('#product-slug')?.value?.trim() || ''
+      basic: {
+      name: getActiveProductElement('#product-name')?.value?.trim() || '',
+      brand: getActiveProductElement('#product-brand')?.value?.trim() || '',
+      productCode: getActiveProductElement('#product-code')?.value?.trim() || '',
+      barcode: getActiveProductElement('#product-barcode')?.value?.trim() || '',
+      sku: getActiveProductElement('#product-sku')?.value?.trim() || '',
+      slug: getActiveProductElement('#product-slug')?.value?.trim() || ''
     },
     category: getProductCategoryData(),
     pricing: getProductPricingData(),
@@ -1396,21 +1943,37 @@ export function cleanupProductForm() {
 
   const form = activeContainer.querySelector('#product-form');
 
+  // Form event cleanup
   form?.removeEventListener('submit', handleFormSubmit);
 
+  unbindSaveReviewEvents();
+  if (saveReviewResolver) {
+    settleProductSaveReview(false);
+  }
+
+  // Reset button event cleanup
+  resetButtonRef?.removeEventListener('click', handleReset);
+  resetButtonRef = null;
+
+  // Basic information event cleanup
   basicEventsCleanup?.();
   basicEventsCleanup = null;
 
+  // Module cleanup
   cleanupProductCategory();
   cleanupProductInventory();
+
+  // Purchase lot cleanup
   resetProductLots();
   resetLotCreate();
   resetLotVariants();
   resetLotCost();
   resetLotHistory();
+
   setLotCreateProductId(null);
   setLotCreatePreferredLotId(null);
 
+  // Reset form state
   activeContainer = null;
   currentProductId = null;
   isSaving = false;

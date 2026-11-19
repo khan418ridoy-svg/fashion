@@ -12,6 +12,15 @@ const {
   prepareProductChange
 } = require('../product/product-cache.service');
 
+const {
+  prepareProductPrivateContext
+} = require('../product/product-private.service');
+
+const {
+  buildCanonicalProductDocument,
+  getProductTotalStock
+} = require('../product/product-schema.service');
+
 // ========================================
 // Collections
 // ========================================
@@ -271,9 +280,21 @@ async function restoreStock(payload = {}) {
       );
     }
 
-    const product = productSnapshot.data() || {};
+    const publicProduct = productSnapshot.data() || {};
+    const privateContext = await prepareProductPrivateContext({
+      db,
+      transaction,
+      productId,
+      privateId: publicProduct.privateId || ''
+    });
+    const product = privateContext.hydrate(publicProduct);
+    const storedVariants = Array.isArray(product.variants)
+      ? product.variants
+      : Array.isArray(product.inventory?.variants)
+        ? product.inventory.variants
+        : null;
 
-    if (!Array.isArray(product.variants)) {
+    if (!storedVariants) {
       throw createError(
         'Product variants are invalid.',
         409,
@@ -366,7 +387,7 @@ async function restoreStock(payload = {}) {
     // RESTORE PRODUCT AND LOT STOCK
     // ====================================
 
-    const productVariants = product.variants.map(
+    const productVariants = storedVariants.map(
       variant => ({ ...variant })
     );
 
@@ -584,7 +605,7 @@ async function restoreStock(payload = {}) {
     // ====================================
 
     const currentTotalStock = nonNegativeInteger(
-      product.totalStock || 0,
+      getProductTotalStock(product),
       'Product total stock'
     );
 
@@ -621,12 +642,19 @@ async function restoreStock(payload = {}) {
       transaction.update(lot.ref, lot.data);
     }
 
-    transaction.update(productRef, {
+    const updatedProduct = {
+      ...product,
       variants: productVariants,
-      totalStock: nextTotalStock,
       version: currentVersion + 1,
       updatedAt: now
-    });
+    };
+    const privatePlan = privateContext.prepare(updatedProduct);
+    const canonicalProduct = buildCanonicalProductDocument(
+      privatePlan.publicProduct
+    );
+
+    transaction.set(productRef, canonicalProduct);
+    privatePlan.write(transaction);
 
     transaction.update(allocationRef, {
       status: 'restored',

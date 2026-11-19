@@ -46,17 +46,59 @@ function section(title, content) {
 // SECTION RENDERERS
 // ========================================
 
+
+
+function safeImageUrl(value) {
+  const url = String(value || '').trim();
+
+  if (!url) return '';
+
+  // Allow HTTPS and relative image paths only.
+  if (/^https:\/\//i.test(url)) return url;
+
+  if (
+    url.startsWith('/') &&
+    !url.startsWith('//')
+  ) {
+    return url;
+  }
+
+  return '';
+}
+
+
+
+
+
+
+
+
+
+
 function renderGallery(images, name) {
-  if (!images.length) {
+  const safeImages = [
+    ...new Set(
+      (Array.isArray(images) ? images : [])
+        .map(safeImageUrl)
+        .filter(Boolean)
+    )
+  ];
+
+  if (!safeImages.length) {
     return '<div class="product-view-image"><span aria-hidden="true">📦</span></div>';
   }
 
-  const thumbs = images.length > 1
+  const thumbs = safeImages.length > 1
     ? `<div class="product-view-thumbs">
-        ${images.map((src, index) => `
-          <button type="button" class="product-view-thumb${index === 0 ? ' is-active' : ''}"
-            data-view-image="${escapeHTML(src)}" aria-label="Image ${index + 1}">
-            <img src="${escapeHTML(src)}" alt="">
+        ${safeImages.map((src, index) => `
+          <button
+            type="button"
+            class="product-view-thumb${index === 0 ? ' is-active' : ''}"
+            data-view-image="${escapeHTML(src)}"
+            aria-label="Image ${index + 1}"
+            aria-pressed="${index === 0 ? 'true' : 'false'}"
+          >
+            <img src="${escapeHTML(src)}" alt="" loading="lazy">
           </button>
         `).join('')}
       </div>`
@@ -65,13 +107,17 @@ function renderGallery(images, name) {
   return `
     <div class="product-view-gallery">
       <div class="product-view-image">
-        <img id="product-view-main-image" src="${escapeHTML(images[0])}"
-          alt="${escapeHTML(name)}">
+        <img
+          id="product-view-main-image"
+          src="${escapeHTML(safeImages[0])}"
+          alt="${escapeHTML(name)}"
+        >
       </div>
       ${thumbs}
     </div>
   `;
 }
+
 
 function renderPricing(pricing) {
   const cards = [
@@ -313,7 +359,7 @@ function renderMerchandising(details) {
     </div>
     <div class="product-view-tags">
       ${(enabledFlags.length ? enabledFlags : ['No merchandising flags'])
-        .map(flag => `<span class="product-view-tag">${escapeHTML(flag)}</span>`).join('')}
+      .map(flag => `<span class="product-view-tag">${escapeHTML(flag)}</span>`).join('')}
     </div>
     ${details.purchaseNote ? `
       <p class="product-view-description"><strong>Purchase note:</strong> ${escapeHTML(details.purchaseNote)}</p>
@@ -359,23 +405,46 @@ function buildProductViewHTML(product) {
 // GALLERY CLICK (thumbnail -> main image)
 // ========================================
 
+
 function bindGallery(modal) {
-  if (modal.dataset.galleryBound === 'true') return;
+  if (!modal || modal.dataset.galleryBound === 'true') return;
 
   modal.dataset.galleryBound = 'true';
 
   modal.addEventListener('click', event => {
-    const thumb = event.target.closest('[data-view-image]');
-    if (!thumb) return;
+    const target = event.target;
 
-    const main = modal.querySelector('#product-view-main-image');
-    if (main) main.src = thumb.dataset.viewImage;
+    if (!(target instanceof Element)) return;
+
+    const thumb = target.closest('[data-view-image]');
+
+    if (!thumb || !modal.contains(thumb)) return;
+
+    const imageUrl = safeImageUrl(
+      thumb.dataset.viewImage
+    );
+
+    if (!imageUrl) return;
+
+    const main = modal.querySelector(
+      '#product-view-main-image'
+    );
+
+    if (!main) return;
+
+    main.src = imageUrl;
 
     modal.querySelectorAll('.product-view-thumb').forEach(item => {
-      item.classList.toggle('is-active', item === thumb);
+      const active = item === thumb;
+
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-pressed', String(active));
     });
   });
 }
+
+let previousViewFocus = null;
+
 
 // ========================================
 // PUBLIC API
@@ -388,6 +457,7 @@ export function renderProductView(pageRoot, product, { activating = false } = {}
   const title = pageRoot.querySelector('#product-view-title');
   const activateButton = pageRoot.querySelector('[data-products-action="activate-view"]');
   const editButton = pageRoot.querySelector('[data-products-action="edit-view"]');
+  const archiveButton = pageRoot.querySelector('[data-products-action="archive-view"]');;
 
   if (title) title.textContent = getProductName(product);
   if (body) body.innerHTML = buildProductViewHTML(product);
@@ -400,12 +470,26 @@ export function renderProductView(pageRoot, product, { activating = false } = {}
   }
 
   if (editButton) editButton.dataset.productId = product.id;
+
+  
+    if (archiveButton) {
+    const archived = getProductStatus(product) === 'archived';
+
+    archiveButton.hidden = archived;
+    archiveButton.disabled = activating || archived;
+    archiveButton.dataset.productId = product.id;
+  }
 }
+
 
 export function openProductView(pageRoot, product, options = {}) {
   const modal = pageRoot?.querySelector('#product-view-modal');
 
   if (!modal || !product?.id) return false;
+
+  if (!modal.classList.contains('is-open')) {
+    previousViewFocus = document.activeElement;
+  }
 
   renderProductView(pageRoot, product, options);
   bindGallery(modal);
@@ -414,18 +498,40 @@ export function openProductView(pageRoot, product, options = {}) {
   modal.classList.add('is-open');
   modal.setAttribute('aria-hidden', 'false');
 
-  window.setTimeout(() => (
-    modal.querySelector('[data-products-action="close-view"]')?.focus()
-  ), 0);
+  window.setTimeout(() => {
+    if (
+      !modal.isConnected ||
+      modal.hidden ||
+      !modal.classList.contains('is-open')
+    ) {
+      return;
+    }
+
+    modal.querySelector(
+      '[data-products-action="close-view"]'
+    )?.focus();
+  }, 0);
 
   return true;
 }
 
 export function closeProductView(pageRoot) {
   const modal = pageRoot?.querySelector('#product-view-modal');
+
   if (!modal) return;
 
   modal.classList.remove('is-open');
   modal.hidden = true;
   modal.setAttribute('aria-hidden', 'true');
+
+  const focusTarget = previousViewFocus;
+  previousViewFocus = null;
+
+  if (
+    focusTarget instanceof HTMLElement &&
+    focusTarget.isConnected &&
+    !focusTarget.hasAttribute('disabled')
+  ) {
+    focusTarget.focus();
+  }
 }

@@ -30,7 +30,14 @@ const SELECTORS = {
   fit: '#product-fit',
   sleeveType: '#product-sleeve-type',
   washCare: '#product-wash-care',
-  tags: '#product-tags'
+  tags: '#product-tags',
+  shortCounter: '#product-short-description-counter',
+  descriptionCounter: '#product-description-counter'
+};
+
+const LIMITS = {
+  shortDescription: 300,
+  description: 10000
 };
 
 
@@ -56,7 +63,7 @@ function getElements() {
 // ========================================
 
 function getValue(element) {
-  return element?.value?.trim() || '';
+  return String(element?.value ?? '').trim();
 }
 
 
@@ -67,7 +74,9 @@ function getValue(element) {
 function setValue(element, value) {
   if (!element) return;
 
-  element.value = value ?? '';
+  element.value = value == null
+    ? ''
+    : String(value);
 }
 
 
@@ -76,24 +85,25 @@ function setValue(element, value) {
 // ========================================
 
 function normalizeTags(value) {
+  let tags = [];
+
   if (Array.isArray(value)) {
-    return [...new Set(
-      value
-        .map(tag => String(tag).trim())
-        .filter(Boolean)
-    )];
+    tags = value;
+  } else if (typeof value === 'string') {
+    tags = value.split(',');
   }
 
-  if (typeof value === 'string') {
-    return [...new Set(
-      value
-        .split(',')
-        .map(tag => tag.trim())
-        .filter(Boolean)
-    )];
-  }
+  const normalized = tags
+    .map(tag => String(tag ?? '').trim())
+    .filter(Boolean);
 
-  return [];
+  return [...new Set(
+    normalized.map(tag => tag.toLowerCase())
+  )].map(normalizedTag => {
+    return normalized.find(
+      tag => tag.toLowerCase() === normalizedTag
+    ) || normalizedTag;
+  });
 }
 
 
@@ -106,18 +116,14 @@ export function getProductDescriptionData() {
 
   return {
     shortDescription: getValue(elements.shortDescription),
-
     description: getValue(elements.description),
-
     fabricType: getValue(elements.fabricType),
-
     fit: getValue(elements.fit),
-
     sleeveType: getValue(elements.sleeveType),
-
     washCare: getValue(elements.washCare),
-
-    tags: normalizeTags(getValue(elements.tags))
+    tags: normalizeTags(
+      getValue(elements.tags)
+    )
   };
 }
 
@@ -128,6 +134,10 @@ export function getProductDescriptionData() {
 // ========================================
 
 export function setProductDescriptionData(data = {}) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    data = {};
+  }
+
   const elements = getElements();
 
   setValue(
@@ -164,6 +174,18 @@ export function setProductDescriptionData(data = {}) {
     elements.tags,
     normalizeTags(data.tags).join(', ')
   );
+
+  updateCharacterCounter(
+    elements.shortDescription,
+    getProductElement(SELECTORS.shortCounter),
+    LIMITS.shortDescription
+  );
+
+  updateCharacterCounter(
+    elements.description,
+    getProductElement(SELECTORS.descriptionCounter),
+    LIMITS.description
+  );
 }
 
 
@@ -194,9 +216,9 @@ export function validateProductDescription() {
     elements.description
   );
 
-  if (shortDescription.length > 300) {
+  if (shortDescription.length > LIMITS.shortDescription) {
     showProductMessage(
-      'Short Description সর্বোচ্চ 300 অক্ষর হতে পারবে।',
+      `Short Description সর্বোচ্চ ${LIMITS.shortDescription} অক্ষর হতে পারবে।`,
       'warning'
     );
 
@@ -205,9 +227,9 @@ export function validateProductDescription() {
     return false;
   }
 
-  if (description.length > 10000) {
+  if (description.length > LIMITS.description) {
     showProductMessage(
-      'Description সর্বোচ্চ 10000 অক্ষর হতে পারবে।',
+      `Description সর্বোচ্চ ${LIMITS.description} অক্ষর হতে পারবে।`,
       'warning'
     );
 
@@ -228,8 +250,22 @@ export function resetProductDescription() {
   const elements = getElements();
 
   Object.values(elements).forEach(element => {
-    if (element) element.value = '';
+    if (element) {
+      element.value = '';
+    }
   });
+
+  updateCharacterCounter(
+    elements.shortDescription,
+    getProductElement(SELECTORS.shortCounter),
+    LIMITS.shortDescription
+  );
+
+  updateCharacterCounter(
+    elements.description,
+    getProductElement(SELECTORS.descriptionCounter),
+    LIMITS.description
+  );
 }
 
 
@@ -246,6 +282,29 @@ function updateCharacterCounter(element, counter, maxLength) {
 
 
 // ========================================
+// BIND SINGLE INPUT EVENT
+// ========================================
+
+function bindCounterEvent(element, counter, maxLength) {
+  if (!element) return;
+
+  if (element.dataset.descriptionCounterBound === 'true') {
+    return;
+  }
+
+  element.addEventListener('input', () => {
+    updateCharacterCounter(
+      element,
+      counter,
+      maxLength
+    );
+  });
+
+  element.dataset.descriptionCounterBound = 'true';
+}
+
+
+// ========================================
 // BIND EVENTS
 // ========================================
 
@@ -253,33 +312,23 @@ function bindDescriptionEvents() {
   const elements = getElements();
 
   const shortCounter = getProductElement(
-    '#product-short-description-counter'
+    SELECTORS.shortCounter
   );
 
   const descriptionCounter = getProductElement(
-    '#product-description-counter'
+    SELECTORS.descriptionCounter
   );
 
-  elements.shortDescription?.addEventListener(
-    'input',
-    () => {
-      updateCharacterCounter(
-        elements.shortDescription,
-        shortCounter,
-        300
-      );
-    }
+  bindCounterEvent(
+    elements.shortDescription,
+    shortCounter,
+    LIMITS.shortDescription
   );
 
-  elements.description?.addEventListener(
-    'input',
-    () => {
-      updateCharacterCounter(
-        elements.description,
-        descriptionCounter,
-        10000
-      );
-    }
+  bindCounterEvent(
+    elements.description,
+    descriptionCounter,
+    LIMITS.description
   );
 }
 
@@ -305,14 +354,14 @@ export function initProductDescription({ force = false } = {}) {
 
   updateCharacterCounter(
     elements.shortDescription,
-    getProductElement('#product-short-description-counter'),
-    300
+    getProductElement(SELECTORS.shortCounter),
+    LIMITS.shortDescription
   );
 
   updateCharacterCounter(
     elements.description,
-    getProductElement('#product-description-counter'),
-    10000
+    getProductElement(SELECTORS.descriptionCounter),
+    LIMITS.description
   );
 
   initialized = true;

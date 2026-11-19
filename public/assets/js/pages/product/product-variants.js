@@ -3,7 +3,7 @@
 
 // ========================================
 // PRODUCT VARIANTS
-// Color, Size, SKU, Barcode, Price & Stock
+// Color, Size, SKU, Barcode, Price & Lot-managed Stock
 // ========================================
 
 import {
@@ -11,14 +11,12 @@ import {
   showProductMessage
 } from './product-utils.js';
 
-
 // ========================================
 // STATE
 // ========================================
 
 let variants = [];
 let initialized = false;
-
 
 // ========================================
 // SELECTORS
@@ -30,7 +28,6 @@ const SELECTORS = {
   regularPrice: '#product-regular-price',
   sellingPrice: '#product-selling-price'
 };
-
 
 // ========================================
 // GET ELEMENTS
@@ -45,7 +42,6 @@ function getElements() {
   };
 }
 
-
 // ========================================
 // GENERATE VARIANT ID
 // ========================================
@@ -58,7 +54,6 @@ function generateVariantId() {
   return `variant-${Date.now()}-${Math.random()
     .toString(36).slice(2, 10)}`;
 }
-
 
 // ========================================
 // ESCAPE HTML
@@ -74,7 +69,6 @@ function escapeHTML(value) {
   })[char]);
 }
 
-
 // ========================================
 // CREATE VARIANT
 // ========================================
@@ -82,9 +76,14 @@ function escapeHTML(value) {
 function createVariant(data = {}) {
   const regularPrice = Number(data.regularPrice) || 0;
   const sellingPrice = Number(data.sellingPrice) || 0;
-  const discountPercent = regularPrice > 0 && sellingPrice <= regularPrice
-    ? Number((((regularPrice - sellingPrice) / regularPrice) * 100).toFixed(2))
-    : 0;
+
+  const discountPercent =
+    regularPrice > 0 && sellingPrice <= regularPrice
+      ? Number(
+        (((regularPrice - sellingPrice) / regularPrice) * 100)
+          .toFixed(2)
+      )
+      : 0;
 
   return {
     localId: data.localId || generateVariantId(),
@@ -100,9 +99,11 @@ function createVariant(data = {}) {
     regularPrice,
     sellingPrice,
     discountPercent,
-    buyPrice: data.buyPrice === '' || data.buyPrice == null
-      ? null
-      : Number(data.buyPrice),
+
+    buyPrice:
+      data.buyPrice === '' || data.buyPrice == null
+        ? null
+        : Number(data.buyPrice),
 
     stock: Number(data.stock) || 0,
     lowStockAlert: Number(data.lowStockAlert) || 0,
@@ -110,7 +111,6 @@ function createVariant(data = {}) {
     isActive: data.isActive !== false
   };
 }
-
 
 // ========================================
 // GET VARIANT HTML
@@ -125,10 +125,12 @@ function getVariantHTML(variant, index) {
         <strong>Variant ${index + 1}</strong>
 
         <div class="product-variant-header-actions">
-          <button type="button" class="btn btn-sm btn-secondary"
+          <button type="button"
+                  class="btn btn-sm btn-secondary"
                   data-action="add-size">
             + Add Size
           </button>
+
           <button type="button"
                   class="remove-product-variant"
                   data-action="remove"
@@ -210,14 +212,12 @@ function getVariantHTML(variant, index) {
                  placeholder="Use product buy price">
         </label>
 
-        <label>
-          Stock
-          <input type="number"
-                 data-field="stock"
-                 min="0"
-                 step="1"
-                 value="${variant.stock}">
-        </label>
+       <div class="product-variant-field">
+  <span class="product-variant-field-label">Stock</span>
+  <div class="product-stock-managed-notice" role="note">
+    Stock পরিবর্তন করতে নিচের Purchase Lot ব্যবহার করুন।
+  </div>
+</div>
 
         <label>
           Low Stock Alert
@@ -240,7 +240,6 @@ function getVariantHTML(variant, index) {
   `;
 }
 
-
 // ========================================
 // RENDER VARIANTS
 // ========================================
@@ -257,6 +256,10 @@ function renderVariants() {
   notifyVariantsChanged();
 }
 
+// ========================================
+// NOTIFY VARIANT CHANGES
+// ========================================
+
 function notifyVariantsChanged() {
   document.dispatchEvent(
     new CustomEvent('product:variants-changed', {
@@ -266,7 +269,6 @@ function notifyVariantsChanged() {
     })
   );
 }
-
 
 // ========================================
 // UPDATE VARIANT VALUE
@@ -287,6 +289,9 @@ function updateVariantValue(element) {
 
   if (!field || !(field in variant)) return;
 
+  // Stock can only be changed through Purchase Lots.
+  if (field === 'stock') return;
+
   if (field === 'isActive') {
     variant.isActive = element.checked;
     notifyVariantsChanged();
@@ -298,7 +303,7 @@ function updateVariantValue(element) {
       ? null
       : Number(element.value);
   } else if (
-    ['regularPrice', 'sellingPrice', 'stock', 'lowStockAlert']
+    ['regularPrice', 'sellingPrice', 'lowStockAlert']
       .includes(field)
   ) {
     variant[field] = element.value === ''
@@ -308,13 +313,15 @@ function updateVariantValue(element) {
     variant[field] = element.value;
   }
 
-  if (field === 'regularPrice' || field === 'sellingPrice') {
+  if (
+    field === 'regularPrice' ||
+    field === 'sellingPrice'
+  ) {
     updateVariantDiscount(variant, item);
   }
 
   notifyVariantsChanged();
 }
-
 
 // ========================================
 // UPDATE VARIANT DISCOUNT
@@ -342,9 +349,10 @@ function updateVariantDiscount(variant, item) {
     '[data-field="discountPercent"]'
   );
 
-  if (input) input.value = discount;
+  if (input) {
+    input.value = discount;
+  }
 }
-
 
 // ========================================
 // ADD VARIANT
@@ -364,9 +372,13 @@ export function addProductVariant(data = {}) {
   const variant = createVariant({
     regularPrice:
       getProductElement('#product-regular-price')?.value || 0,
+
     sellingPrice:
       getProductElement('#product-selling-price')?.value || 0,
+
     buyPrice: null,
+    stock: 0,
+
     ...data
   });
 
@@ -374,7 +386,6 @@ export function addProductVariant(data = {}) {
 
   renderVariants();
 }
-
 
 // ========================================
 // REMOVE VARIANT
@@ -387,7 +398,6 @@ function removeProductVariant(localId) {
 
   renderVariants();
 }
-
 
 // ========================================
 // VALIDATE VARIANTS
@@ -402,16 +412,23 @@ export function validateProductVariants() {
 
   for (const variant of variants) {
     if (!variant.color.trim()) {
-      showProductMessage('Variant Color লিখুন।', 'warning');
+      showProductMessage(
+        'Variant Color লিখুন।',
+        'warning'
+      );
       return false;
     }
 
     if (!variant.size.trim()) {
-      showProductMessage('Variant Size লিখুন।', 'warning');
+      showProductMessage(
+        'Variant Size লিখুন।',
+        'warning'
+      );
       return false;
     }
 
-    const key = `${variant.color.trim().toLowerCase()}::${variant.size.trim().toLowerCase()}`;
+    const key =
+      `${variant.color.trim().toLowerCase()}::${variant.size.trim().toLowerCase()}`;
 
     if (seen.has(key)) {
       showProductMessage(
@@ -438,9 +455,9 @@ export function validateProductVariants() {
     }
 
     if (
-      !Number.isInteger(variant.stock) ||
+      !Number.isSafeInteger(variant.stock) ||
       variant.stock < 0 ||
-      !Number.isInteger(variant.lowStockAlert) ||
+      !Number.isSafeInteger(variant.lowStockAlert) ||
       variant.lowStockAlert < 0
     ) {
       showProductMessage(
@@ -452,7 +469,10 @@ export function validateProductVariants() {
 
     if (
       variant.buyPrice !== null &&
-      (!Number.isFinite(variant.buyPrice) || variant.buyPrice < 0)
+      (
+        !Number.isFinite(variant.buyPrice) ||
+        variant.buyPrice < 0
+      )
     ) {
       showProductMessage(
         'Variant Buy Price সঠিকভাবে দিন অথবা খালি রাখুন।',
@@ -464,7 +484,6 @@ export function validateProductVariants() {
 
   return true;
 }
-
 
 // ========================================
 // GET VARIANT DATA
@@ -483,6 +502,7 @@ export function getProductVariantsData() {
     regularPrice: variant.regularPrice,
     sellingPrice: variant.sellingPrice,
     discountPercent: variant.discountPercent,
+
     buyPrice: variant.buyPrice,
 
     stock: variant.stock,
@@ -492,14 +512,15 @@ export function getProductVariantsData() {
   }));
 }
 
-
 // ========================================
 // SET VARIANT DATA (EDIT PRODUCT)
 // ========================================
 
 export function setProductVariantsData(data = []) {
   if (!Array.isArray(data)) {
-    console.error('[PRODUCT VARIANTS] Invalid variant data.');
+    console.error(
+      '[PRODUCT VARIANTS] Invalid variant data.'
+    );
     return;
   }
 
@@ -507,7 +528,6 @@ export function setProductVariantsData(data = []) {
 
   renderVariants();
 }
-
 
 // ========================================
 // RESET VARIANTS
@@ -518,7 +538,6 @@ export function resetProductVariants() {
   renderVariants();
 }
 
-
 // ========================================
 // BIND EVENTS
 // ========================================
@@ -527,13 +546,16 @@ function bindVariantEvents() {
   const { container, addButton } = getElements();
 
   if (!container || !addButton) return;
-  if (container.dataset.variantEventsBound === 'true') return;
 
-  addButton?.addEventListener('click', () => {
+  if (container.dataset.variantEventsBound === 'true') {
+    return;
+  }
+
+  addButton.addEventListener('click', () => {
     addProductVariant();
   });
 
-  container?.addEventListener('input', event => {
+  container.addEventListener('input', event => {
     const element = event.target;
 
     if (!element.matches('[data-field]')) return;
@@ -541,15 +563,17 @@ function bindVariantEvents() {
     updateVariantValue(element);
   });
 
-  container?.addEventListener('change', event => {
+  container.addEventListener('change', event => {
     const element = event.target;
 
-    if (!element.matches('[data-field="isActive"]')) return;
+    if (!element.matches('[data-field="isActive"]')) {
+      return;
+    }
 
     updateVariantValue(element);
   });
 
-  container?.addEventListener('click', event => {
+  container.addEventListener('click', event => {
     const button = event.target.closest('[data-action]');
 
     if (!button) return;
@@ -571,9 +595,11 @@ function bindVariantEvents() {
           buyPrice: source.buyPrice,
           lowStockAlert: source.lowStockAlert,
           isActive: source.isActive,
+          stock: 0,
           size: ''
         });
       }
+
       return;
     }
 
@@ -584,7 +610,6 @@ function bindVariantEvents() {
 
   container.dataset.variantEventsBound = 'true';
 }
-
 
 // ========================================
 // INITIALIZE
@@ -608,7 +633,6 @@ export function initProductVariants({ force = false } = {}) {
 
   renderVariants();
 }
-
 
 // ========================================
 // DEFAULT EXPORT

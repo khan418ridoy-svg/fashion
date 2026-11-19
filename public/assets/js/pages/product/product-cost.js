@@ -12,9 +12,10 @@ import {
   productApiRequest
 } from './product-utils.js';
 
-let initialized = false;
-
-let currentProductId = null;
+const LIMITS = {
+  supplier: 150,
+  purchaseNote: 1000
+};
 
 const SELECTORS = {
   buyPrice: '#product-buy-price',
@@ -39,16 +40,49 @@ function getElements() {
 
 
 // ========================================
+// NORMALIZE DATA
+// ========================================
+
+function normalizeCostData(data = {}) {
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    Array.isArray(data)
+  ) {
+    data = {};
+  }
+
+  return {
+    buyPrice: data.buyPrice ?? 0,
+    supplier: String(data.supplier ?? '').trim(),
+    purchaseNote: String(data.purchaseNote ?? '').trim()
+  };
+}
+
+
+// ========================================
 // GET COST DATA
 // ========================================
 
 export function getProductCostData() {
   const elements = getElements();
 
+  const rawBuyPrice = String(
+    elements.buyPrice?.value ?? ''
+  ).trim();
+
   return {
-    buyPrice: Number(elements.buyPrice?.value || 0),
-    supplier: elements.supplier?.value.trim() || '',
-    purchaseNote: elements.purchaseNote?.value.trim() || ''
+    buyPrice: rawBuyPrice === ''
+      ? 0
+      : Number(rawBuyPrice),
+
+    supplier: String(
+      elements.supplier?.value ?? ''
+    ).trim(),
+
+    purchaseNote: String(
+      elements.purchaseNote?.value ?? ''
+    ).trim()
   };
 }
 
@@ -59,17 +93,18 @@ export function getProductCostData() {
 
 export function setProductCostData(data = {}) {
   const elements = getElements();
+  const cost = normalizeCostData(data);
 
   if (elements.buyPrice) {
-    elements.buyPrice.value = data.buyPrice ?? '';
+    elements.buyPrice.value = cost.buyPrice;
   }
 
   if (elements.supplier) {
-    elements.supplier.value = data.supplier || '';
+    elements.supplier.value = cost.supplier;
   }
 
   if (elements.purchaseNote) {
-    elements.purchaseNote.value = data.purchaseNote || '';
+    elements.purchaseNote.value = cost.purchaseNote;
   }
 }
 
@@ -80,12 +115,11 @@ export function setProductCostData(data = {}) {
 
 export function validateProductCost() {
   const elements = getElements();
-
-  const buyPrice = Number(elements.buyPrice?.value || 0);
+  const cost = getProductCostData();
 
   if (
-    !Number.isFinite(buyPrice) ||
-    buyPrice < 0
+    !Number.isFinite(cost.buyPrice) ||
+    cost.buyPrice < 0
   ) {
     showProductMessage(
       'Purchase Cost সঠিকভাবে লিখুন।',
@@ -93,6 +127,32 @@ export function validateProductCost() {
     );
 
     elements.buyPrice?.focus();
+
+    return false;
+  }
+
+  if (cost.supplier.length > LIMITS.supplier) {
+    showProductMessage(
+      `Supplier সর্বোচ্চ ${LIMITS.supplier} অক্ষরের হতে পারবে।`,
+      'warning'
+    );
+
+    elements.supplier?.focus();
+
+    return false;
+  }
+
+  if (
+    cost.purchaseNote.length >
+    LIMITS.purchaseNote
+  ) {
+    showProductMessage(
+      `Purchase Note সর্বোচ্চ ${LIMITS.purchaseNote} অক্ষরের হতে পারবে।`,
+      'warning'
+    );
+
+    elements.purchaseNote?.focus();
+
     return false;
   }
 
@@ -101,27 +161,47 @@ export function validateProductCost() {
 
 
 // ========================================
+// BUILD API URL
+// ========================================
+
+function getCostApiUrl(productId) {
+  const id = String(productId ?? '').trim();
+
+  if (!id) {
+    throw new Error('Product ID পাওয়া যায়নি।');
+  }
+
+  return `/api/products/${encodeURIComponent(id)}/costs`;
+}
+
+
+// ========================================
 // LOAD PRIVATE COST
 // ========================================
 
 export async function loadProductCost(productId) {
-  if (!productId) return false;
+  if (!productId) {
+    resetProductCost();
+    return false;
+  }
+
+  // Prevent previous product data from remaining visible.
+  resetProductCost();
 
   try {
     const result = await productApiRequest(
-      `/api/products/${encodeURIComponent(productId)}/costs`
+      getCostApiUrl(productId)
     );
 
     setProductCostData(result.data || {});
 
-    currentProductId = productId;
-
     return true;
 
   } catch (error) {
-    console.error('[PRODUCT COST]', error);
+    console.error('[PRODUCT COST] Load failed:', error);
 
     showProductMessage(
+      error.message ||
       'Private Product Cost load করা যায়নি।',
       'error'
     );
@@ -145,18 +225,20 @@ export async function saveProductCost(productId) {
     return false;
   }
 
-  if (!validateProductCost()) return false;
+  if (!validateProductCost()) {
+    return false;
+  }
 
   try {
+    const cost = getProductCostData();
+
     await productApiRequest(
-      `/api/products/${encodeURIComponent(productId)}/costs`,
+      getCostApiUrl(productId),
       {
         method: 'PUT',
-        body: JSON.stringify(getProductCostData())
+        body: JSON.stringify(cost)
       }
     );
-
-    currentProductId = productId;
 
     showProductMessage(
       'Private Cost সফলভাবে Save হয়েছে।',
@@ -166,10 +248,11 @@ export async function saveProductCost(productId) {
     return true;
 
   } catch (error) {
-    console.error('[PRODUCT COST]', error);
+    console.error('[PRODUCT COST] Save failed:', error);
 
     showProductMessage(
-      error.message || 'Private Cost Save করা যায়নি।',
+      error.message ||
+      'Private Cost Save করা যায়নি।',
       'error'
     );
 
@@ -185,13 +268,17 @@ export async function saveProductCost(productId) {
 export function resetProductCost() {
   const elements = getElements();
 
-  if (elements.buyPrice) elements.buyPrice.value = '';
-  if (elements.supplier) elements.supplier.value = '';
+  if (elements.buyPrice) {
+    elements.buyPrice.value = '';
+  }
+
+  if (elements.supplier) {
+    elements.supplier.value = '';
+  }
+
   if (elements.purchaseNote) {
     elements.purchaseNote.value = '';
   }
-
-  currentProductId = null;
 }
 
 
@@ -199,17 +286,19 @@ export function resetProductCost() {
 // INITIALIZE
 // ========================================
 
-export function initProductCost({ force = false } = {}) {
-  if (initialized && !force) return;
-
+export function initProductCost() {
   const elements = getElements();
 
   if (!elements.container) {
-    console.warn('[PRODUCT COST] Container not found.');
-    return;
+    console.warn(
+      '[PRODUCT COST] Container not found.'
+    );
+
+    return false;
   }
 
-  initialized = true;
+  return true;
 }
+
 
 export default initProductCost;

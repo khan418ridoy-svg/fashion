@@ -11,17 +11,13 @@ import {
   showProductMessage
 } from './product-utils.js';
 
-
-// ========================================
-// SELECTORS
-// ========================================
-
 const SELECTORS = {
   regularPrice: '#product-regular-price',
   sellingPrice: '#product-selling-price',
   discountPercent: '#product-discount-percent'
 };
 
+const PRICE_STEP = '0.01';
 
 // ========================================
 // GET ELEMENTS
@@ -35,6 +31,25 @@ function getElements() {
   };
 }
 
+// ========================================
+// PRICE HELPERS
+// ========================================
+
+function parsePrice(value) {
+  if (value === null || value === undefined || value === '') {
+    return 0;
+  }
+
+  const price = Number(value);
+
+  return Number.isFinite(price) ? price : NaN;
+}
+
+function getNumericValue(element) {
+  if (!element) return 0;
+
+  return parsePrice(element.value);
+}
 
 // ========================================
 // FORMAT PRICE
@@ -43,32 +58,24 @@ function getElements() {
 export function formatProductPrice(value) {
   const price = Number(value);
 
-  if (!Number.isFinite(price)) return '0';
+  if (!Number.isFinite(price)) {
+    return '0';
+  }
 
-  return price.toLocaleString('en-IN', {
+  return price.toLocaleString('en-BD', {
+    minimumFractionDigits: 0,
     maximumFractionDigits: 2
   });
 }
-
-
-// ========================================
-// GET NUMERIC VALUE
-// ========================================
-
-function getNumericValue(element) {
-  if (!element) return 0;
-
-  const value = Number(element.value);
-
-  return Number.isFinite(value) ? value : 0;
-}
-
 
 // ========================================
 // CALCULATE DISCOUNT
 // ========================================
 
-export function calculateProductDiscount(regularPrice, sellingPrice) {
+export function calculateProductDiscount(
+  regularPrice,
+  sellingPrice
+) {
   const regular = Number(regularPrice);
   const selling = Number(sellingPrice);
 
@@ -87,7 +94,6 @@ export function calculateProductDiscount(regularPrice, sellingPrice) {
   );
 }
 
-
 // ========================================
 // UPDATE DISCOUNT
 // ========================================
@@ -103,16 +109,23 @@ function updateDiscount() {
     return;
   }
 
-  const regular = getNumericValue(regularPrice);
-  const selling = getNumericValue(sellingPrice);
   const discount = calculateProductDiscount(
-    regular,
-    selling
+    getNumericValue(regularPrice),
+    getNumericValue(sellingPrice)
   );
 
-  discountPercent.value = discount;
+  discountPercent.value = String(discount);
 }
 
+// ========================================
+// CHECK VARIANTS
+// ========================================
+
+function hasProductVariants() {
+  return Boolean(
+    getProductElement('.product-variant-item')
+  );
+}
 
 // ========================================
 // VALIDATE PRICING
@@ -135,13 +148,28 @@ export function validateProductPricing() {
 
   const regular = getNumericValue(regularPrice);
   const selling = getNumericValue(sellingPrice);
-  const hasVariants = Boolean(
-    getProductElement('.product-variant-item')
-  );
 
-  // Variant-wise pricing can fully replace the product-level defaults.
-  if (hasVariants && regular === 0 && selling === 0) {
+  const variantsExist = hasProductVariants();
+
+  // Variant-wise pricing can replace product-level defaults.
+  if (
+    variantsExist &&
+    regularPrice.value === '' &&
+    sellingPrice.value === ''
+  ) {
     return true;
+  }
+
+  if (
+    !Number.isFinite(regular) ||
+    !Number.isFinite(selling)
+  ) {
+    showProductMessage(
+      'Regular ও Selling Price অবশ্যই সঠিক সংখ্যা হতে হবে।',
+      'warning'
+    );
+
+    return false;
   }
 
   if (regular <= 0) {
@@ -174,9 +202,20 @@ export function validateProductPricing() {
     return false;
   }
 
+  if (
+    !regularPrice.checkValidity() ||
+    !sellingPrice.checkValidity()
+  ) {
+    showProductMessage(
+      'Price সর্বোচ্চ দুই দশমিক ঘর পর্যন্ত লিখুন।',
+      'warning'
+    );
+
+    return false;
+  }
+
   return true;
 }
-
 
 // ========================================
 // GET PRICING DATA
@@ -192,15 +231,16 @@ export function getProductPricingData() {
   const selling = getNumericValue(sellingPrice);
 
   return {
-    regularPrice: regular,
-    sellingPrice: selling,
+    regularPrice: Number.isFinite(regular) ? regular : 0,
+
+    sellingPrice: Number.isFinite(selling) ? selling : 0,
+
     discountPercent: calculateProductDiscount(
       regular,
       selling
     )
   };
 }
-
 
 // ========================================
 // SET PRICING DATA
@@ -212,14 +252,32 @@ export function setProductPricingData(data = {}) {
     sellingPrice
   } = getElements();
 
-  if (!regularPrice || !sellingPrice) return;
+  if (!regularPrice || !sellingPrice) {
+    return;
+  }
 
-  regularPrice.value = data.regularPrice ?? '';
-  sellingPrice.value = data.sellingPrice ?? '';
+  const input =
+    data &&
+    typeof data === 'object' &&
+    !Array.isArray(data)
+      ? data
+      : {};
+
+  const regular = parsePrice(input.regularPrice);
+  const selling = parsePrice(input.sellingPrice);
+
+  regularPrice.value =
+    Number.isFinite(regular) && regular >= 0
+      ? String(regular)
+      : '';
+
+  sellingPrice.value =
+    Number.isFinite(selling) && selling >= 0
+      ? String(selling)
+      : '';
 
   updateDiscount();
 }
-
 
 // ========================================
 // RESET PRICING
@@ -232,11 +290,26 @@ export function resetProductPricing() {
     discountPercent
   } = getElements();
 
-  if (regularPrice) regularPrice.value = '';
-  if (sellingPrice) sellingPrice.value = '';
-  if (discountPercent) discountPercent.value = '';
+  if (regularPrice) {
+    regularPrice.value = '';
+  }
+
+  if (sellingPrice) {
+    sellingPrice.value = '';
+  }
+
+  if (discountPercent) {
+    discountPercent.value = '';
+  }
 }
 
+// ========================================
+// EVENT HANDLER
+// ========================================
+
+function handlePricingInput() {
+  updateDiscount();
+}
 
 // ========================================
 // EVENT BINDING
@@ -248,20 +321,27 @@ function bindPricingEvents() {
     sellingPrice
   } = getElements();
 
-  regularPrice?.addEventListener('input', updateDiscount);
-  sellingPrice?.addEventListener('input', updateDiscount);
-}
+  [regularPrice, sellingPrice].forEach(element => {
+    if (!element) return;
 
+    if (element.dataset.pricingEventBound === 'true') {
+      return;
+    }
+
+    element.addEventListener(
+      'input',
+      handlePricingInput
+    );
+
+    element.dataset.pricingEventBound = 'true';
+  });
+}
 
 // ========================================
 // INITIALIZE
 // ========================================
 
-let initialized = false;
-
 export function initProductPricing({ force = false } = {}) {
-  if (initialized && !force) return;
-
   const {
     regularPrice,
     sellingPrice,
@@ -282,12 +362,18 @@ export function initProductPricing({ force = false } = {}) {
   regularPrice.min = '0';
   sellingPrice.min = '0';
 
-  regularPrice.step = '0.01';
-  sellingPrice.step = '0.01';
+  regularPrice.step = PRICE_STEP;
+  sellingPrice.step = PRICE_STEP;
 
   discountPercent.readOnly = true;
 
   bindPricingEvents();
 
-  initialized = true;
+  updateDiscount();
 }
+
+// ========================================
+// DEFAULT EXPORT
+// ========================================
+
+export default initProductPricing;

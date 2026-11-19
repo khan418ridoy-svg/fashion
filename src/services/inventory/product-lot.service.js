@@ -13,8 +13,14 @@ const {
 } = require('../product/product-cache.service');
 
 const {
-  prepareProductPrivateContext
+  prepareProductPrivateContext,
+  mergePrivateProductData
 } = require('../product/product-private.service');
+
+const {
+  buildCanonicalProductDocument,
+  getProductTotalStock
+} = require('../product/product-schema.service');
 
 // ========================================
 // Configuration
@@ -156,12 +162,7 @@ function createDefaultProductVariant(productId, product = {}) {
     color: '',
     size: '',
     buyPrice: getProductBuyPrice(product) ?? 0,
-    stock: Number(
-      product.totalStock ??
-      product.stock ??
-      product.inventory?.totalStock ??
-      0
-    ),
+    stock: getProductTotalStock(product),
     isActive: true
   };
 }
@@ -525,9 +526,14 @@ async function createProductLot(productId, payload = {}) {
     });
     const product = privateContext.hydrate(publicProduct);
 
+    const storedVariants = Array.isArray(product.variants)
+      ? product.variants
+      : Array.isArray(product.inventory?.variants)
+        ? product.inventory.variants
+        : [];
     const productVariants = (
-      Array.isArray(product.variants) && product.variants.length > 0
-        ? product.variants
+      storedVariants.length > 0
+        ? storedVariants
         : [createDefaultProductVariant(id, product)]
     ).map(item => ({ ...item }));
 
@@ -719,12 +725,7 @@ async function createProductLot(productId, payload = {}) {
       };
     });
 
-    const currentTotalStock = Number(
-      product.totalStock ??
-      product.stock ??
-      product.inventory?.totalStock ??
-      0
-    );
+    const currentTotalStock = getProductTotalStock(product);
 
     if (
       !Number.isSafeInteger(currentTotalStock) ||
@@ -743,13 +744,15 @@ async function createProductLot(productId, payload = {}) {
 
     const fullUpdatedProduct = {
       ...product,
-      totalStock: newTotalStock,
       variants: productVariants,
       version: Number(product.version || 0) + 1,
       updatedAt: now
     };
     const privatePlan = privateContext.prepare(
       fullUpdatedProduct
+    );
+    const canonicalProduct = buildCanonicalProductDocument(
+      privatePlan.publicProduct
     );
 
     // ------------------------------------
@@ -813,7 +816,7 @@ async function createProductLot(productId, payload = {}) {
 
     transaction.set(
       productRef,
-      privatePlan.publicProduct
+      canonicalProduct
     );
 
     transaction.set(
@@ -831,9 +834,11 @@ async function createProductLot(productId, payload = {}) {
     return {
       lot: lotDocument,
       product: {
-        id,
+        ...mergePrivateProductData(
+          canonicalProduct,
+          privatePlan.privateRecord
+        ),
         totalStock: newTotalStock,
-        variants: productVariants,
         version: fullUpdatedProduct.version
       }
     };

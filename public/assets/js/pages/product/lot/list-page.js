@@ -185,7 +185,11 @@ async function fetchProducts() {
       id: String(product.id || product.productId || ''),
       name: String(product.name || product.basic?.name || 'Unnamed Product'),
       sku: String(product.sku || product.basic?.sku || ''),
-      totalStock: toNumber(product.totalStock ?? product.inventory?.totalStock)
+      totalStock: toNumber(
+        product.summary?.totalStock ??
+        product.totalStock ??
+        product.inventory?.totalStock
+      )
     }))
     .filter(product => product.id);
 

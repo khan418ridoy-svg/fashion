@@ -72,13 +72,6 @@ const VARIANT_PRIVATE_FIELDS = [
   'confidential'
 ];
 
-const VARIANT_IDENTITY_FIELDS = [
-  'id',
-  'variantId',
-  'sku',
-  'variantSku'
-];
-
 function validateDb(db) {
   if (!db || typeof db.collection !== 'function') {
     throw new Error('Firestore database is required.');
@@ -174,8 +167,30 @@ function omitFields(source, fields) {
   return result;
 }
 
-function hasKeys(value) {
-  return isPlainObject(value) && Object.keys(value).length > 0;
+function firstNonNegativeNumber(...values) {
+  for (const value of values) {
+    if (value === '' || value === null || value === undefined) {
+      continue;
+    }
+
+    const number = Number(value);
+
+    if (Number.isFinite(number) && number >= 0) {
+      return number;
+    }
+  }
+
+  return null;
+}
+
+function firstPresentString(sources, field, maxLength) {
+  for (const source of sources) {
+    if (hasOwn(source, field)) {
+      return cleanString(source[field], maxLength);
+    }
+  }
+
+  return '';
 }
 
 function getVariantIdentity(variant = {}, index = 0) {
@@ -225,26 +240,53 @@ function createPrivateVariant(
     variant,
     index
   ) || {};
-  const privateFields = pickFields(
-    variant,
-    VARIANT_PRIVATE_FIELDS
+  const variantId = cleanString(
+    variant.id ||
+    variant.variantId ||
+    existing.variantId ||
+    existing.id,
+    128
   );
-  const identity = pickFields(
-    variant,
-    VARIANT_IDENTITY_FIELDS
+  const sku = cleanString(
+    variant.sku ||
+    variant.variantSku ||
+    existing.sku ||
+    existing.variantSku,
+    100
+  ).toUpperCase();
+  const buyPrice = hasOwn(variant, 'buyPrice')
+    ? firstNonNegativeNumber(variant.buyPrice)
+    : firstNonNegativeNumber(
+        variant.cost?.buyPrice,
+        variant.costPrice,
+        variant.purchasePrice,
+        variant.purchaseCost,
+        existing.buyPrice,
+        existing.cost?.buyPrice,
+        existing.costPrice,
+        existing.purchasePrice,
+        existing.purchaseCost
+      );
+  const currentAverageBuyRate = firstNonNegativeNumber(
+    variant.currentAverageBuyRate,
+    variant.averageBuyRate,
+    variant.averageBuyPrice,
+    variant.avgBuyRate,
+    existing.currentAverageBuyRate,
+    existing.averageBuyRate,
+    existing.averageBuyPrice,
+    existing.avgBuyRate,
+    buyPrice
   );
-  const merged = {
-    ...cloneValue(existing),
-    ...identity,
-    ...privateFields,
-    privateIndex: index
-  };
 
-  const hasPrivateValue = VARIANT_PRIVATE_FIELDS.some(field => (
-    hasOwn(merged, field)
-  ));
-
-  return hasPrivateValue ? merged : null;
+  return removeUndefined({
+    variantId: variantId || `variant-${index + 1}`,
+    sku,
+    buyPrice,
+    ...(currentAverageBuyRate === null
+      ? {}
+      : { currentAverageBuyRate })
+  });
 }
 
 function buildPrivateVariants(
@@ -258,7 +300,14 @@ function buildPrivateVariants(
       : null;
 
   if (!sourceVariants) {
-    return cloneValue(existingPrivateVariants);
+    return (Array.isArray(existingPrivateVariants)
+      ? existingPrivateVariants
+      : []
+    ).map((variant, index) => createPrivateVariant(
+      variant,
+      index,
+      existingPrivateVariants
+    ));
   }
 
   return sourceVariants
@@ -266,60 +315,65 @@ function buildPrivateVariants(
       variant,
       index,
       existingPrivateVariants
-    ))
-    .filter(Boolean);
-}
-
-function mergePrivateObject(existing, incoming) {
-  if (!hasKeys(incoming)) {
-    return cloneValue(existing || {});
-  }
-
-  return {
-    ...(isPlainObject(existing) ? cloneValue(existing) : {}),
-    ...cloneValue(incoming)
-  };
+    ));
 }
 
 function buildPrivateData(product = {}, existingData = {}) {
-  const rootData = {
-    ...(isPlainObject(existingData) ? cloneValue(existingData) : {}),
-    ...pickFields(product, ROOT_PRIVATE_FIELDS)
-  };
-
-  const pricing = pickFields(
-    product.pricing,
-    PRICING_PRIVATE_FIELDS
+  const currentData = isPlainObject(existingData)
+    ? existingData
+    : {};
+  const productCost = isPlainObject(product.cost)
+    ? product.cost
+    : {};
+  const existingCost = isPlainObject(currentData.cost)
+    ? currentData.cost
+    : {};
+  const productPricing = isPlainObject(product.pricing)
+    ? product.pricing
+    : {};
+  const buyPrice = firstNonNegativeNumber(
+    productCost.buyPrice,
+    product.buyPrice,
+    product.costPrice,
+    product.purchasePrice,
+    product.purchaseCost,
+    productPricing.buyPrice,
+    productPricing.costPrice,
+    productPricing.purchasePrice,
+    productPricing.purchaseCost,
+    existingCost.buyPrice,
+    currentData.buyPrice,
+    currentData.costPrice,
+    currentData.purchasePrice,
+    currentData.purchaseCost
   );
-  const inventory = pickFields(
-    product.inventory,
-    INVENTORY_PRIVATE_FIELDS
-  );
-
-  if (hasKeys(pricing) || hasKeys(rootData.pricing)) {
-    rootData.pricing = mergePrivateObject(
-      rootData.pricing,
-      pricing
-    );
-  }
-
-  if (hasKeys(inventory) || hasKeys(rootData.inventory)) {
-    rootData.inventory = mergePrivateObject(
-      rootData.inventory,
-      inventory
-    );
-  }
-
-  rootData.variants = buildPrivateVariants(
+  const costSources = [
+    productCost,
     product,
-    rootData.variants
+    existingCost,
+    currentData
+  ];
+  const variants = buildPrivateVariants(
+    product,
+    currentData.variants
   );
 
-  if (!rootData.variants.length) {
-    delete rootData.variants;
-  }
-
-  return removeUndefined(rootData);
+  return removeUndefined({
+    cost: {
+      buyPrice: buyPrice ?? 0,
+      supplier: firstPresentString(
+        costSources,
+        'supplier',
+        150
+      ),
+      purchaseNote: firstPresentString(
+        costSources,
+        'purchaseNote',
+        1000
+      )
+    },
+    variants
+  });
 }
 
 function stripVariantPrivateData(variant) {
@@ -332,6 +386,8 @@ function stripPrivateProductData(product = {}) {
   }
 
   const result = omitFields(product, ROOT_PRIVATE_FIELDS);
+
+  delete result.cost;
 
   if (isPlainObject(result.pricing)) {
     result.pricing = omitFields(
@@ -393,42 +449,20 @@ function mergePrivateProductData(product = {}, privateRecord = {}) {
     return {};
   }
 
-  const privateData = isPlainObject(privateRecord?.data)
-    ? privateRecord.data
-    : {};
+  const privateData = buildPrivateData(
+    {},
+    isPlainObject(privateRecord?.data)
+      ? privateRecord.data
+      : {}
+  );
   const result = {
     ...cloneValue(product),
-    ...pickFields(privateData, ROOT_PRIVATE_FIELDS)
+    cost: cloneValue(privateData.cost)
   };
-
-  if (hasKeys(privateData.pricing)) {
-    result.pricing = {
-      ...(isPlainObject(result.pricing)
-        ? cloneValue(result.pricing)
-        : {}),
-      ...cloneValue(privateData.pricing)
-    };
-  }
-
-  if (hasKeys(privateData.inventory)) {
-    result.inventory = {
-      ...(isPlainObject(result.inventory)
-        ? cloneValue(result.inventory)
-        : {}),
-      ...cloneValue(privateData.inventory)
-    };
-  }
 
   if (Array.isArray(result.variants)) {
     result.variants = mergePrivateVariants(
       result.variants,
-      privateData.variants
-    );
-  }
-
-  if (Array.isArray(result.inventory?.variants)) {
-    result.inventory.variants = mergePrivateVariants(
-      result.inventory.variants,
       privateData.variants
     );
   }
@@ -604,6 +638,14 @@ async function prepareProductPrivateContext(options = {}) {
     productId: safeProductId,
     privateId: batchContext.privateId,
 
+    getExistingRecord() {
+      return cloneValue(existingRecord);
+    },
+
+    getExistingBatch() {
+      return cloneValue(batchContext.batchData);
+    },
+
     hydrate(product) {
       return mergePrivateProductData(
         product,
@@ -619,7 +661,6 @@ async function prepareProductPrivateContext(options = {}) {
           product,
           existingRecord.data
         ),
-        createdAt: existingRecord.createdAt || now,
         updatedAt: now
       };
       const products = {
@@ -640,7 +681,6 @@ async function prepareProductPrivateContext(options = {}) {
       }
 
       const batchDocument = {
-        ...cloneValue(batchContext.batchData),
         id: batchContext.privateId,
         batchNumber: batchContext.batchNumber,
         capacity: PRIVATE_BATCH_SIZE,
@@ -784,6 +824,7 @@ module.exports = {
   PRIVATE_COLLECTION,
   PRIVATE_BATCH_SIZE,
 
+  buildPrivateData,
   stripPrivateProductData,
   mergePrivateProductData,
 

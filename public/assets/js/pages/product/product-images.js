@@ -91,6 +91,26 @@ function escapeHTML(value) {
 
 
 // ========================================
+// CLOUDINARY IMAGE CHECK
+// ========================================
+
+function isValidCloudinaryImage(image) {
+  if (!image || typeof image !== 'object') {
+    return false;
+  }
+
+  const url = String(image.url || '').trim();
+  const publicId = String(image.publicId || '').trim();
+
+  return (
+    url.startsWith('https://res.cloudinary.com/') &&
+    Boolean(publicId) &&
+    image.localOnly !== true
+  );
+}
+
+
+// ========================================
 // VALIDATE IMAGE FILE
 // ========================================
 
@@ -100,6 +120,15 @@ function validateImageFile(file) {
   if (!ALLOWED_TYPES.includes(file.type)) {
     showProductMessage(
       'শুধুমাত্র JPG, PNG ও WebP ছবি Upload করা যাবে।',
+      'warning'
+    );
+
+    return false;
+  }
+
+  if (file.size <= 0) {
+    showProductMessage(
+      'Empty image file Upload করা যাবে না।',
       'warning'
     );
 
@@ -126,27 +155,18 @@ function validateImageFile(file) {
 function getCloudinaryConfig() {
   const config = window.APP_CONFIG?.cloudinary;
 
-  if (!config?.cloudName || !config?.uploadPreset) {
+  const cloudName = String(config?.cloudName || '').trim();
+  const uploadPreset = String(config?.uploadPreset || '').trim();
+
+  if (!cloudName || !uploadPreset) {
     return null;
   }
 
-  return config;
-}
-
-function readFileAsDataURL(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.addEventListener('load', () => {
-      resolve(String(reader.result));
-    });
-
-    reader.addEventListener('error', () => {
-      reject(reader.error || new Error('Image file পড়া যায়নি।'));
-    });
-
-    reader.readAsDataURL(file);
-  });
+  return {
+    cloudName,
+    uploadPreset,
+    folder: String(config.folder || '').trim()
+  };
 }
 
 
@@ -158,16 +178,9 @@ async function uploadToCloudinary(file) {
   const config = getCloudinaryConfig();
 
   if (!config) {
-    return {
-      url: await readFileAsDataURL(file),
-      publicId: '',
-      width: 0,
-      height: 0,
-      format: file.type.split('/')[1] || '',
-      bytes: file.size,
-      fileName: file.name,
-      localOnly: true
-    };
+    throw new Error(
+      'Cloudinary configuration পাওয়া যায়নি। আগে Cloudinary config ঠিক করুন।'
+    );
   }
 
   const formData = new FormData();
@@ -187,25 +200,41 @@ async function uploadToCloudinary(file) {
     }
   );
 
-  const result = await response.json();
+  let result;
 
-  if (!response.ok) {
+  try {
+    result = await response.json();
+  } catch {
     throw new Error(
-      result.error?.message || 'Cloudinary upload failed'
+      'Cloudinary থেকে valid response পাওয়া যায়নি।'
     );
   }
 
-  if (!result.secure_url || !result.public_id) {
-    throw new Error('Cloudinary image response invalid');
+  if (!response.ok) {
+    throw new Error(
+      result?.error?.message || 'Cloudinary upload failed.'
+    );
+  }
+
+  if (
+    !result?.secure_url ||
+    !result?.public_id ||
+    !result.secure_url.startsWith('https://res.cloudinary.com/')
+  ) {
+    throw new Error(
+      'Cloudinary image response invalid.'
+    );
   }
 
   return {
     url: result.secure_url,
     publicId: result.public_id,
-    width: result.width || 0,
-    height: result.height || 0,
+    width: Number(result.width || 0),
+    height: Number(result.height || 0),
     format: result.format || '',
-    bytes: result.bytes || 0
+    bytes: Number(result.bytes || file.size),
+    fileName: file.name,
+    localOnly: false
   };
 }
 
@@ -238,8 +267,8 @@ async function uploadProductImage(file) {
       width: uploaded.width,
       height: uploaded.height,
       format: uploaded.format,
-      fileName: uploaded.fileName || file.name,
-      localOnly: uploaded.localOnly === true,
+      fileName: uploaded.fileName,
+      localOnly: false,
       isMain: productImages.length === 0,
       isHover: false
     };
@@ -249,11 +278,9 @@ async function uploadProductImage(file) {
     renderProductImages();
 
     showProductMessage(
-      uploaded.localOnly
-        ? 'ছবি preview-তে যোগ হয়েছে। Cloudinary config না থাকায় এখন local data হিসেবে রাখা হয়েছে।'
-        : 'ছবি সফলভাবে Upload হয়েছে।',
-      uploaded.localOnly ? 'info' : 'success',
-      uploaded.localOnly ? 6000 : 3500
+      'ছবি সফলভাবে Cloudinary-তে Upload হয়েছে।',
+      'success',
+      3500
     );
 
     return image;
@@ -276,16 +303,15 @@ async function uploadProductImage(file) {
 // ========================================
 
 function getCloudinaryLibraryUrl() {
-  const cloudName = String(
-    window.APP_CONFIG?.cloudinary?.cloudName || ''
-  ).trim();
+  const config = getCloudinaryConfig();
 
-  if (!cloudName) {
+  if (!config) {
     return '/api/cloudinary/images';
   }
 
-  return `/api/cloudinary/images?cloudName=${encodeURIComponent(cloudName)}`;
+  return `/api/cloudinary/images?cloudName=${encodeURIComponent(config.cloudName)}`;
 }
+
 
 function setCloudinaryStatus(message = '', type = '') {
   const { cloudinaryStatus } = getElements();
@@ -294,23 +320,28 @@ function setCloudinaryStatus(message = '', type = '') {
 
   cloudinaryStatus.textContent = message;
   cloudinaryStatus.hidden = !message;
+
   cloudinaryStatus.className = [
     'cloudinary-library-status',
     type ? `is-${type}` : ''
   ].filter(Boolean).join(' ');
 }
 
+
 function updateCloudinaryAddButton() {
   const { cloudinaryAdd } = getElements();
+
   if (!cloudinaryAdd) return;
 
   const count = selectedCloudinaryIds.size;
 
   cloudinaryAdd.disabled = count === 0;
+
   cloudinaryAdd.textContent = count > 0
     ? `Add Selected (${count})`
     : 'Add Selected';
 }
+
 
 function isCloudinaryImageAdded(image) {
   return productImages.some(item => (
@@ -318,6 +349,7 @@ function isCloudinaryImageAdded(image) {
     item.url === image.url
   ));
 }
+
 
 function getCloudinaryFileName(image) {
   const name = String(image.publicId || 'cloudinary-image')
@@ -329,14 +361,24 @@ function getCloudinaryFileName(image) {
     : name;
 }
 
+
+// ========================================
+// RENDER CLOUDINARY LIBRARY
+// ========================================
+
 function renderCloudinaryImages() {
   const { cloudinaryGrid } = getElements();
+
   if (!cloudinaryGrid) return;
 
   cloudinaryGrid.replaceChildren();
 
   if (!cloudinaryImages.length) {
-    setCloudinaryStatus('No Cloudinary images found.', 'empty');
+    setCloudinaryStatus(
+      'No Cloudinary images found.',
+      'empty'
+    );
+
     return;
   }
 
@@ -345,6 +387,7 @@ function renderCloudinaryImages() {
   cloudinaryImages.forEach(image => {
     const added = isCloudinaryImageAdded(image);
     const selected = selectedCloudinaryIds.has(image.publicId);
+
     const button = document.createElement('button');
 
     button.type = 'button';
@@ -353,21 +396,30 @@ function renderCloudinaryImages() {
     button.setAttribute('aria-pressed', String(selected));
     button.disabled = added;
 
-    if (selected) button.classList.add('is-selected');
-    if (added) button.classList.add('is-added');
+    if (selected) {
+      button.classList.add('is-selected');
+    }
+
+    if (added) {
+      button.classList.add('is-added');
+    }
 
     const preview = document.createElement('img');
+
     preview.src = image.url;
     preview.alt = image.publicId;
     preview.loading = 'lazy';
 
     const info = document.createElement('span');
+
     info.className = 'cloudinary-library-item-info';
 
     const name = document.createElement('strong');
+
     name.textContent = image.publicId;
 
     const details = document.createElement('small');
+
     details.textContent = image.width && image.height
       ? `${image.width} × ${image.height}`
       : (image.format || 'Image');
@@ -377,8 +429,10 @@ function renderCloudinaryImages() {
 
     if (added) {
       const badge = document.createElement('span');
+
       badge.className = 'cloudinary-library-badge';
       badge.textContent = 'Added';
+
       button.appendChild(badge);
     }
 
@@ -386,12 +440,18 @@ function renderCloudinaryImages() {
   });
 }
 
+
+// ========================================
+// LOAD CLOUDINARY IMAGES
+// ========================================
+
 async function loadCloudinaryImages() {
   if (isCloudinaryLoading) return;
 
   const { cloudinaryButton } = getElements();
 
   isCloudinaryLoading = true;
+
   setCloudinaryStatus('Loading Cloudinary images...');
 
   if (cloudinaryButton) {
@@ -406,14 +466,16 @@ async function loadCloudinaryImages() {
     );
 
     cloudinaryImages = Array.isArray(result.images)
-      ? result.images.filter(image => image?.publicId && image?.url)
+      ? result.images.filter(image => isValidCloudinaryImage(image))
       : [];
 
     renderCloudinaryImages();
 
   } catch (error) {
     console.error('[CLOUDINARY LIBRARY]', error);
+
     cloudinaryImages = [];
+
     setCloudinaryStatus(
       error.message || 'Cloudinary images could not be loaded.',
       'error'
@@ -429,12 +491,18 @@ async function loadCloudinaryImages() {
   }
 }
 
+
+// ========================================
+// OPEN CLOUDINARY LIBRARY
+// ========================================
+
 async function openCloudinaryLibrary() {
   const { cloudinaryModal } = getElements();
 
   if (!cloudinaryModal) return;
 
   selectedCloudinaryIds = new Set();
+
   updateCloudinaryAddButton();
 
   cloudinaryModal.hidden = false;
@@ -444,8 +512,14 @@ async function openCloudinaryLibrary() {
   await loadCloudinaryImages();
 }
 
+
+// ========================================
+// CLOSE CLOUDINARY LIBRARY
+// ========================================
+
 function closeCloudinaryLibrary() {
   const { cloudinaryModal } = getElements();
+
   if (!cloudinaryModal) return;
 
   cloudinaryModal.classList.remove('is-open');
@@ -453,8 +527,14 @@ function closeCloudinaryLibrary() {
   cloudinaryModal.setAttribute('aria-hidden', 'true');
 }
 
+
+// ========================================
+// TOGGLE CLOUDINARY IMAGE
+// ========================================
+
 function toggleCloudinaryImage(button) {
   const publicId = button.dataset.cloudinaryId;
+
   if (!publicId || button.disabled) return;
 
   if (selectedCloudinaryIds.has(publicId)) {
@@ -464,16 +544,28 @@ function toggleCloudinaryImage(button) {
   }
 
   const selected = selectedCloudinaryIds.has(publicId);
+
   button.classList.toggle('is-selected', selected);
   button.setAttribute('aria-pressed', String(selected));
+
   updateCloudinaryAddButton();
 }
 
+
+// ========================================
+// ADD SELECTED CLOUDINARY IMAGES
+// ========================================
+
 function addSelectedCloudinaryImages() {
-  const availableSlots = Math.max(0, MAX_IMAGES - productImages.length);
+  const availableSlots = Math.max(
+    0,
+    MAX_IMAGES - productImages.length
+  );
+
   const selected = cloudinaryImages.filter(image => (
     selectedCloudinaryIds.has(image.publicId) &&
-    !isCloudinaryImageAdded(image)
+    !isCloudinaryImageAdded(image) &&
+    isValidCloudinaryImage(image)
   ));
 
   if (!availableSlots) {
@@ -481,6 +573,7 @@ function addSelectedCloudinaryImages() {
       `সর্বোচ্চ ${MAX_IMAGES} টি ছবি রাখা যাবে।`,
       'warning'
     );
+
     return;
   }
 
@@ -506,6 +599,7 @@ function addSelectedCloudinaryImages() {
   });
 
   renderProductImages();
+
   closeCloudinaryLibrary();
 
   if (selected.length > imagesToAdd.length) {
@@ -513,6 +607,7 @@ function addSelectedCloudinaryImages() {
       `${imagesToAdd.length} টি ছবি যোগ হয়েছে। সর্বোচ্চ ${MAX_IMAGES} টি রাখা যাবে।`,
       'warning'
     );
+
   } else if (imagesToAdd.length) {
     showProductMessage(
       `${imagesToAdd.length} টি Cloudinary ছবি যোগ হয়েছে।`,
@@ -546,6 +641,7 @@ function renderProductImages() {
     img.loading = 'lazy';
 
     const info = document.createElement('div');
+
     info.className = 'product-image-info';
 
     const mainButton = document.createElement('button');
@@ -679,10 +775,13 @@ function bindImageEvents() {
   } = getElements();
 
   if (!input || !uploadButton || !container) return;
-  if (container.dataset.imageEventsBound === 'true') return;
 
-  uploadButton?.addEventListener('click', () => {
-    input?.click();
+  if (container.dataset.imageEventsBound === 'true') {
+    return;
+  }
+
+  uploadButton.addEventListener('click', () => {
+    input.click();
   });
 
   cloudinaryButton?.addEventListener(
@@ -707,7 +806,10 @@ function bindImageEvents() {
 
   cloudinaryGrid?.addEventListener('click', event => {
     const button = event.target.closest('[data-cloudinary-id]');
-    if (button) toggleCloudinaryImage(button);
+
+    if (button) {
+      toggleCloudinaryImage(button);
+    }
   });
 
   cloudinaryModal?.addEventListener('click', event => {
@@ -716,11 +818,18 @@ function bindImageEvents() {
     }
   });
 
-  input?.addEventListener('change', async () => {
+  input.addEventListener('change', async () => {
     const files = Array.from(input.files || []);
 
     for (const file of files) {
-      if (productImages.length >= MAX_IMAGES) break;
+      if (productImages.length >= MAX_IMAGES) {
+        showProductMessage(
+          `সর্বোচ্চ ${MAX_IMAGES} টি ছবি রাখা যাবে।`,
+          'warning'
+        );
+
+        break;
+      }
 
       await uploadProductImage(file);
     }
@@ -728,7 +837,7 @@ function bindImageEvents() {
     input.value = '';
   });
 
-  container?.addEventListener('click', event => {
+  container.addEventListener('click', event => {
     const button = event.target.closest('[data-action]');
 
     if (!button) return;
@@ -738,6 +847,8 @@ function bindImageEvents() {
     if (!card) return;
 
     const index = Number(card.dataset.index);
+
+    if (!Number.isInteger(index)) return;
 
     switch (button.dataset.action) {
       case 'main':
@@ -754,7 +865,7 @@ function bindImageEvents() {
     }
   });
 
-  container?.addEventListener('input', event => {
+  container.addEventListener('input', event => {
     const inputElement = event.target;
 
     const card = inputElement.closest('.product-image-item');
@@ -763,6 +874,7 @@ function bindImageEvents() {
 
     const index = Number(card.dataset.index);
 
+    if (!Number.isInteger(index)) return;
     if (!productImages[index]) return;
 
     if (inputElement.dataset.action === 'alt') {
@@ -806,21 +918,41 @@ export function getProductImagesData() {
 export function setProductImagesData(images = []) {
   if (!Array.isArray(images)) return;
 
-  productImages = images.slice(0, MAX_IMAGES).map(
-    (image, index) => ({
+  const source = images.slice(0, MAX_IMAGES);
+
+  let mainAssigned = false;
+  let hoverAssigned = false;
+
+  productImages = source.map((image, index) => {
+    const isMain = !mainAssigned && (
+      image.isMain === true || index === 0
+    );
+
+    const isHover = !hoverAssigned && image.isHover === true;
+
+    if (isMain) {
+      mainAssigned = true;
+    }
+
+    if (isHover) {
+      hoverAssigned = true;
+    }
+
+    return {
       url: image.url || '',
       publicId: image.publicId || '',
       alt: image.alt || '',
       color: image.color || '',
       order: index + 1,
-      width: image.width || 0,
-      height: image.height || 0,
-      isMain: image.isMain === true || index === 0,
-      isHover: image.isHover === true,
+      width: Number(image.width || 0),
+      height: Number(image.height || 0),
+      format: image.format || '',
+      isMain,
+      isHover,
       fileName: image.fileName || '',
       localOnly: image.localOnly === true
-    })
-  );
+    };
+  });
 
   renderProductImages();
 }
@@ -831,18 +963,47 @@ export function setProductImagesData(images = []) {
 // ========================================
 
 export function validateProductImages() {
-  if (productImages.length < 3) {
+  // Draft product-এ ছবি না থাকলেও save করা যাবে।
+  // Active product-এর minimum 3 images backend activation gate-এ
+  // validate করতে হবে।
+
+  if (!productImages.length) {
+    return true;
+  }
+
+  const invalidImage = productImages.some(
+    image => !isValidCloudinaryImage(image)
+  );
+
+  if (invalidImage) {
     showProductMessage(
-      'Active Product-এর জন্য কমপক্ষে 3 টি ছবি প্রয়োজন।',
+      'সব Product Image অবশ্যই Cloudinary-তে Upload করতে হবে।',
       'warning'
     );
 
     return false;
   }
 
-  if (!productImages.some(image => image.isMain)) {
+  const mainImages = productImages.filter(
+    image => image.isMain === true
+  );
+
+  if (mainImages.length !== 1) {
     showProductMessage(
-      'একটি Main Image নির্বাচন করুন।',
+      'ঠিক একটি Main Image নির্বাচন করুন।',
+      'warning'
+    );
+
+    return false;
+  }
+
+  const hoverImages = productImages.filter(
+    image => image.isHover === true
+  );
+
+  if (hoverImages.length > 1) {
+    showProductMessage(
+      'একটির বেশি Hover Image রাখা যাবে না।',
       'warning'
     );
 
@@ -864,7 +1025,9 @@ export function resetProductImages() {
 
   const { input } = getElements();
 
-  if (input) input.value = '';
+  if (input) {
+    input.value = '';
+  }
 
   closeCloudinaryLibrary();
   updateCloudinaryAddButton();

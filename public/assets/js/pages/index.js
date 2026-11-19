@@ -11,12 +11,13 @@ import {
 // ========================================
 const PAGE_MODULES = {
   dashboard: () => import('./dashboard.js'),
+products: () => import('./product/index.js'),
   orders: () => import('./orders.js'),
   pos: () => import('./pos.js'),
   botChats: () => import('./bot-chats.js'),
   facebook: () => import('./facebook.js'),
   reports: () => import('./reports.js'),
-  products: () => import('./product/index.js'),
+  
   lots: () => import('./product/lot/list-page.js'),
   coupons: () => import('./coupons.js'),
   collections: () => import('./collections.js'),

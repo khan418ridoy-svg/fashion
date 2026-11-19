@@ -40,9 +40,16 @@ const {
 
 const {
   prepareProductPrivateContext,
+  buildPrivateData,
+  mergePrivateProductData,
   hydrateProductWithPrivateData,
   hydrateProductsWithPrivateData
 } = require('./product-private.service');
+
+const {
+  normalizeAssignments,
+  buildCanonicalProductDocument
+} = require('./product-schema.service');
 
 // --------------------------------------------------
 // Configuration
@@ -149,15 +156,9 @@ function normalizeNewProduct(payload) {
 
   product.variants = Array.isArray(product.variants)
     ? product.variants
-    : [];
-
-  product.totalStock = toNumber(
-    product.totalStock,
-    {
-      min: 0,
-      integer: true
-    }
-  );
+    : Array.isArray(product.inventory?.variants)
+      ? product.inventory.variants
+      : [];
 
   product.active = product.active === true;
   product.status = product.active ? 'active' : 'draft';
@@ -183,6 +184,24 @@ function firstNonNegativeNumber(...values) {
   }
 
   return null;
+}
+
+function canonicalizeHydratedProduct(product = {}) {
+  const publicProduct = buildCanonicalProductDocument(product);
+
+  return mergePrivateProductData(publicProduct, {
+    data: buildPrivateData(product)
+  });
+}
+
+function getExistingVariants(product = {}) {
+  if (Array.isArray(product.variants)) {
+    return product.variants;
+  }
+
+  return Array.isArray(product.inventory?.variants)
+    ? product.inventory.variants
+    : [];
 }
 
 function normalizeInventoryVariants(variants, productSku, existingVariants = []) {
@@ -228,7 +247,7 @@ function normalizeInventoryVariants(variants, productSku, existingVariants = [])
     }
     usedSkus.add(variantSku);
 
-    const stock = Number(existing?.stock || 0);
+    const stock = Number(existing?.stock ?? 0);
     const currentAverageBuyRate = firstNonNegativeNumber(
       existing?.currentAverageBuyRate,
       existing?.averageBuyRate,
@@ -352,6 +371,7 @@ async function createProduct(payload = {}) {
         skuPlan.sku
       ),
 
+      // Initial inventory is added through the Purchase Lot flow.
       totalStock: 0,
 
       version: 1,
@@ -368,6 +388,9 @@ async function createProduct(payload = {}) {
       productId: productRef.id
     });
     const privatePlan = privateContext.prepare(fullDocument);
+    const publicDocument = buildCanonicalProductDocument(
+      privatePlan.publicProduct
+    );
 
     const cachePlan = product.active
       ? await prepareProductChange({
@@ -384,7 +407,7 @@ async function createProduct(payload = {}) {
 
     transaction.create(
       productRef,
-      privatePlan.publicProduct
+      publicDocument
     );
 
     skuPlan.write(transaction);
@@ -394,7 +417,10 @@ async function createProduct(payload = {}) {
 
     cachePlan?.write(transaction);
 
-    return privatePlan.hydratedProduct;
+    return mergePrivateProductData(
+      publicDocument,
+      privatePlan.privateRecord
+    );
   });
 }
 
@@ -416,7 +442,9 @@ async function getProduct(productId) {
     ...snapshot.data()
   };
 
-  return hydrateProductWithPrivateData(db, product);
+  return canonicalizeHydratedProduct(
+    await hydrateProductWithPrivateData(db, product)
+  );
 }
 
 // --------------------------------------------------
@@ -456,10 +484,12 @@ async function getProductBySku(sku) {
     return null;
   }
 
-  return hydrateProductWithPrivateData(db, {
-    id: snapshot.id,
-    ...product
-  });
+  return canonicalizeHydratedProduct(
+    await hydrateProductWithPrivateData(db, {
+      id: snapshot.id,
+      ...product
+    })
+  );
 }
 
 // --------------------------------------------------
@@ -478,7 +508,13 @@ async function getProductBySku(sku) {
 
 async function listProducts(options = {}) {
   const limit = normalizePageSize(options.limit);
-
+  const categoryId = cleanString(options.categoryId, 128);
+  const collectionId = cleanString(options.collectionId, 128);
+  const targetCount = limit + 1;
+  const scanLimit = Math.min(
+    MAX_PAGE_SIZE,
+    Math.max(25, limit * 2)
+  );
   let query = getProductsRef();
 
   if (typeof options.active === 'boolean') {
@@ -489,38 +525,14 @@ async function listProducts(options = {}) {
     );
   }
 
-  if (options.categoryId) {
-    query = query.where(
-      'categoryId',
-      '==',
-      cleanString(options.categoryId, 128)
-    );
-  }
-
-  if (options.collectionId) {
-    query = query.where(
-      'collectionId',
-      '==',
-      cleanString(options.collectionId, 128)
-    );
-  }
-
-  if (options.includeDeleted !== true) {
-    query = query.where(
-      'deleted',
-      '==',
-      false
-    );
-  }
-
-  query = query
-    .orderBy('updatedAt', 'desc')
-    .limit(limit + 1);
+  query = query.orderBy('updatedAt', 'desc');
 
   // Optional cursor:
   // Pass the last Product's updatedAt timestamp.
+  let cursorDate = null;
+
   if (options.startAfter) {
-    const cursorDate = new Date(options.startAfter);
+    cursorDate = new Date(options.startAfter);
 
     if (Number.isNaN(cursorDate.getTime())) {
       throw new ProductError(
@@ -529,25 +541,78 @@ async function listProducts(options = {}) {
         'INVALID_CURSOR'
       );
     }
-
-    query = query.startAfter(cursorDate);
   }
 
-  const snapshot = await query.get();
+  const matchedDocs = [];
+  let lastScannedDoc = null;
+  let exhausted = false;
+  let scanCount = 0;
 
-  const hasMore = snapshot.docs.length > limit;
+  while (
+    matchedDocs.length < targetCount &&
+    !exhausted &&
+    scanCount < 100
+  ) {
+    let pageQuery = query;
 
-  const docs = snapshot.docs.slice(0, limit);
+    if (lastScannedDoc) {
+      pageQuery = pageQuery.startAfter(lastScannedDoc);
+    } else if (cursorDate) {
+      pageQuery = pageQuery.startAfter(cursorDate);
+    }
+
+    const snapshot = await pageQuery.limit(scanLimit).get();
+
+    if (snapshot.empty) {
+      break;
+    }
+
+    for (const doc of snapshot.docs) {
+      const product = doc.data() || {};
+
+      if (
+        options.includeDeleted !== true &&
+        product.deleted === true
+      ) {
+        continue;
+      }
+
+      if (categoryId || collectionId) {
+        const assignments = normalizeAssignments(product);
+        const matches = assignments.some(assignment => (
+          (!categoryId || assignment.categoryId === categoryId) &&
+          (!collectionId || assignment.collectionId === collectionId)
+        ));
+
+        if (!matches) {
+          continue;
+        }
+      }
+
+      matchedDocs.push(doc);
+
+      if (matchedDocs.length >= targetCount) {
+        break;
+      }
+    }
+
+    lastScannedDoc = snapshot.docs[snapshot.docs.length - 1];
+    exhausted = snapshot.docs.length < scanLimit;
+    scanCount++;
+  }
+
+  const hasMore = matchedDocs.length > limit;
+
+  const docs = matchedDocs.slice(0, limit);
 
   const publicProducts = docs.map((doc) => ({
     id: doc.id,
     ...doc.data()
   }));
 
-  const products = await hydrateProductsWithPrivateData(
-    db,
-    publicProducts
-  );
+  const products = (
+    await hydrateProductsWithPrivateData(db, publicProducts)
+  ).map(canonicalizeHydratedProduct);
 
   const lastProduct = products.length
     ? products[products.length - 1]
@@ -636,15 +701,48 @@ async function updateProduct(productId, payload = {}) {
     delete safePayload.deleted;
     delete safePayload.deletedAt;
     delete safePayload.totalStock;
+    delete safePayload.hasStock;
+    delete safePayload.summary;
     delete safePayload.privateId;
 
     const merged = {
       ...existing,
-      ...safePayload,
-
-      // Stock is controlled by inventory/lot services.
-      totalStock: existing.totalStock || 0
+      ...safePayload
     };
+
+    const attributeFields = [
+      'fabricType',
+      'fit',
+      'sleeveType',
+      'washCare'
+    ];
+
+    if (attributeFields.some(field => (
+      Object.prototype.hasOwnProperty.call(safePayload, field)
+    ))) {
+      merged.attributes = {
+        ...(isPlainObject(existing.attributes)
+          ? existing.attributes
+          : {}),
+        ...(isPlainObject(safePayload.attributes)
+          ? safePayload.attributes
+          : {})
+      };
+
+      attributeFields.forEach(field => {
+        if (Object.prototype.hasOwnProperty.call(safePayload, field)) {
+          merged.attributes[field] = safePayload[field];
+        }
+      });
+    }
+
+    if (isPlainObject(safePayload.review)) {
+      merged.stats = {
+        ...(isPlainObject(existing.stats) ? existing.stats : {}),
+        ...(isPlainObject(safePayload.stats) ? safePayload.stats : {}),
+        ...safePayload.review
+      };
+    }
 
     const updatedProduct = normalizeNewProduct(merged);
 
@@ -653,9 +751,8 @@ async function updateProduct(productId, payload = {}) {
     updatedProduct.variants = normalizeInventoryVariants(
       updatedProduct.variants,
       requestedSku,
-      Array.isArray(existing.variants) ? existing.variants : []
+      getExistingVariants(existing)
     );
-    updatedProduct.totalStock = Number(existing.totalStock || 0);
 
     let releasePlan = null;
     let claimPlan = null;
@@ -759,10 +856,13 @@ async function updateProduct(productId, payload = {}) {
     };
 
     const privatePlan = privateContext.prepare(fullDocument);
+    const publicDocument = buildCanonicalProductDocument(
+      privatePlan.publicProduct
+    );
 
     transaction.set(
       productRef,
-      privatePlan.publicProduct
+      publicDocument
     );
 
     if (skuChanged) {
@@ -778,7 +878,10 @@ async function updateProduct(productId, payload = {}) {
 
     cachePlan?.write(transaction);
 
-    return privatePlan.hydratedProduct;
+    return mergePrivateProductData(
+      publicDocument,
+      privatePlan.privateRecord
+    );
   });
 }
 
@@ -1033,16 +1136,16 @@ async function updateProductCosts(productId, payload = {}) {
     const fullProduct = {
       ...privateContext.hydrate(publicProduct),
       cost,
-      buyPrice,
-      supplier: cost.supplier,
-      purchaseNote: cost.purchaseNote,
       updatedAt: new Date()
     };
     const privatePlan = privateContext.prepare(fullProduct);
+    const canonicalProduct = buildCanonicalProductDocument(
+      privatePlan.publicProduct
+    );
 
     transaction.set(
       productRef,
-      privatePlan.publicProduct
+      canonicalProduct
     );
     privatePlan.write(transaction);
 

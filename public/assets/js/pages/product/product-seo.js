@@ -11,9 +11,21 @@ import {
   showProductMessage
 } from './product-utils.js';
 
+
+// ========================================
+// STATE
+// ========================================
+
 let initialized = false;
 
+const LIMITS = {
+  slug: 150,
+  metaTitle: 60,
+  metaDescription: 160
+};
+
 const SELECTORS = {
+  productName: '#product-name',
   slug: '#product-slug',
   metaTitle: '#product-meta-title',
   metaDescription: '#product-meta-description',
@@ -28,6 +40,7 @@ const SELECTORS = {
 
 function getElements() {
   return {
+    productName: getProductElement(SELECTORS.productName),
     slug: getProductElement(SELECTORS.slug),
     metaTitle: getProductElement(SELECTORS.metaTitle),
     metaDescription: getProductElement(SELECTORS.metaDescription),
@@ -42,14 +55,15 @@ function getElements() {
 // ========================================
 
 export function generateProductSlug(value) {
-  return String(value || '')
+  return String(value ?? '')
     .trim()
     .toLowerCase()
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 150);
+    .slice(0, LIMITS.slug)
+    .replace(/-+$/g, '');
 }
 
 
@@ -62,7 +76,7 @@ function updateCounters() {
 
   if (elements.titleCounter && elements.metaTitle) {
     elements.titleCounter.textContent =
-      `${elements.metaTitle.value.length} / 60`;
+      `${elements.metaTitle.value.length} / ${LIMITS.metaTitle}`;
   }
 
   if (
@@ -70,7 +84,33 @@ function updateCounters() {
     elements.metaDescription
   ) {
     elements.descriptionCounter.textContent =
-      `${elements.metaDescription.value.length} / 160`;
+      `${elements.metaDescription.value.length} / ${LIMITS.metaDescription}`;
+  }
+}
+
+
+// ========================================
+// AUTO GENERATE SLUG
+// ========================================
+
+function handleProductNameInput() {
+  const elements = getElements();
+
+  if (!elements.productName || !elements.slug) {
+    return;
+  }
+
+  const currentSlug = elements.slug.value.trim();
+
+  // Existing slug থাকলে সেটি overwrite হবে না।
+  if (currentSlug) return;
+
+  const generatedSlug = generateProductSlug(
+    elements.productName.value
+  );
+
+  if (generatedSlug) {
+    elements.slug.value = generatedSlug;
   }
 }
 
@@ -93,25 +133,135 @@ export function getProductSEOData() {
 
 // ========================================
 // SET SEO DATA
+// EDIT PRODUCT / AI GENERATED DATA
 // ========================================
 
 export function setProductSEOData(data = {}) {
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    Array.isArray(data)
+  ) {
+    data = {};
+  }
+
   const elements = getElements();
 
   if (elements.slug) {
-    elements.slug.value = data.slug || '';
+    elements.slug.value = String(data.slug ?? '');
   }
 
   if (elements.metaTitle) {
-    elements.metaTitle.value = data.metaTitle || '';
+    elements.metaTitle.value = String(data.metaTitle ?? '');
   }
 
   if (elements.metaDescription) {
     elements.metaDescription.value =
-      data.metaDescription || '';
+      String(data.metaDescription ?? '');
   }
 
   updateCounters();
+}
+
+
+// ========================================
+// VALIDATE SLUG
+// ========================================
+
+function validateSlug(slug, slugElement) {
+  if (!slug) {
+    showProductMessage(
+      'Product name থেকে slug তৈরি করা যায়নি। English slug লিখুন।',
+      'warning'
+    );
+
+    getProductElement(SELECTORS.productName)?.focus();
+
+    return false;
+  }
+
+  if (slug.length > LIMITS.slug) {
+    showProductMessage(
+      `Slug সর্বোচ্চ ${LIMITS.slug} অক্ষর হতে পারবে।`,
+      'warning'
+    );
+
+    slugElement?.focus();
+
+    return false;
+  }
+
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+    showProductMessage(
+      'Slug-এ শুধু English letter, number ও hyphen ব্যবহার করুন।',
+      'warning'
+    );
+
+    slugElement?.focus();
+
+    return false;
+  }
+
+  return true;
+}
+
+
+// ========================================
+// CHECK DUPLICATE SLUG
+// ========================================
+
+function validateDuplicateSlug(slug, slugElement) {
+  if (!slugElement) return true;
+
+  let existingSlugs = [];
+
+  try {
+    const parsed = JSON.parse(
+      slugElement.dataset.existingSlugs || '[]'
+    );
+
+    if (Array.isArray(parsed)) {
+      existingSlugs = parsed;
+    }
+
+  } catch (error) {
+    console.warn(
+      '[PRODUCT SEO] Slug list could not be parsed.',
+      error
+    );
+
+    return true;
+  }
+
+  const currentSlug = String(
+    slugElement.dataset.currentSlug || ''
+  ).trim().toLowerCase();
+
+  const normalizedSlug = slug.toLowerCase();
+
+  const duplicate = existingSlugs.some(item => {
+    const value = String(
+      typeof item === 'object' ? item?.slug || '' : item || ''
+    ).trim().toLowerCase();
+
+    return (
+      value === normalizedSlug &&
+      value !== currentSlug
+    );
+  });
+
+  if (duplicate) {
+    showProductMessage(
+      'এই Product Slug আগে ব্যবহার করা হয়েছে।',
+      'warning'
+    );
+
+    slugElement.focus();
+
+    return false;
+  }
+
+  return true;
 }
 
 
@@ -123,67 +273,40 @@ export function validateProductSEO() {
   const elements = getElements();
 
   const title = elements.metaTitle?.value.trim() || '';
+
   const description =
     elements.metaDescription?.value.trim() || '';
 
-  if (title.length > 60) {
+  const slug = elements.slug?.value.trim() || '';
+
+  if (title.length > LIMITS.metaTitle) {
     showProductMessage(
-      'Meta Title সর্বোচ্চ 60 অক্ষর হতে পারবে।',
+      `Meta Title সর্বোচ্চ ${LIMITS.metaTitle} অক্ষর হতে পারবে।`,
       'warning'
     );
 
     elements.metaTitle?.focus();
+
     return false;
   }
 
-  if (description.length > 160) {
+  if (description.length > LIMITS.metaDescription) {
     showProductMessage(
-      'Meta Description সর্বোচ্চ 160 অক্ষর হতে পারবে।',
+      `Meta Description সর্বোচ্চ ${LIMITS.metaDescription} অক্ষর হতে পারবে।`,
       'warning'
     );
 
     elements.metaDescription?.focus();
+
     return false;
   }
 
-  const slug = elements.slug?.value.trim() || '';
-
-  if (!slug) {
-    showProductMessage('Product name থেকে slug তৈরি করা যায়নি।', 'warning');
-    getProductElement('#product-name')?.focus();
+  if (!validateSlug(slug, elements.slug)) {
     return false;
   }
 
-  if (slug && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
-    showProductMessage(
-      'Slug-এ শুধু English letter, number ও hyphen ব্যবহার করুন।',
-      'warning'
-    );
-
-    elements.slug?.focus();
+  if (!validateDuplicateSlug(slug, elements.slug)) {
     return false;
-  }
-
-  try {
-    const existingSlugs = JSON.parse(
-      elements.slug?.dataset.existingSlugs || '[]'
-    );
-    const currentSlug = String(
-      elements.slug?.dataset.currentSlug || ''
-    ).toLowerCase();
-
-    const duplicate = Array.isArray(existingSlugs) &&
-      existingSlugs.some(item => {
-        const value = String(item || '').trim().toLowerCase();
-        return value === slug.toLowerCase() && value !== currentSlug;
-      });
-
-    if (duplicate) {
-      showProductMessage('এই Product Slug আগে ব্যবহার করা হয়েছে।', 'warning');
-      return false;
-    }
-  } catch (error) {
-    console.warn('[PRODUCT SEO] Slug list could not be checked.', error);
   }
 
   return true;
@@ -197,13 +320,36 @@ export function validateProductSEO() {
 export function resetProductSEO() {
   const elements = getElements();
 
-  if (elements.slug) elements.slug.value = '';
-  if (elements.metaTitle) elements.metaTitle.value = '';
+  if (elements.slug) {
+    elements.slug.value = '';
+  }
+
+  if (elements.metaTitle) {
+    elements.metaTitle.value = '';
+  }
+
   if (elements.metaDescription) {
     elements.metaDescription.value = '';
   }
 
   updateCounters();
+}
+
+
+// ========================================
+// BIND SINGLE EVENT
+// ========================================
+
+function bindInputEvent(element, callback) {
+  if (!element) return;
+
+  if (element.dataset.seoEventsBound === 'true') {
+    return;
+  }
+
+  element.addEventListener('input', callback);
+
+  element.dataset.seoEventsBound = 'true';
 }
 
 
@@ -214,13 +360,18 @@ export function resetProductSEO() {
 function bindEvents() {
   const elements = getElements();
 
-  elements.metaTitle?.addEventListener(
-    'input',
+  bindInputEvent(
+    elements.productName,
+    handleProductNameInput
+  );
+
+  bindInputEvent(
+    elements.metaTitle,
     updateCounters
   );
 
-  elements.metaDescription?.addEventListener(
-    'input',
+  bindInputEvent(
+    elements.metaDescription,
     updateCounters
   );
 }
@@ -240,14 +391,23 @@ export function initProductSEO({ force = false } = {}) {
     !elements.metaTitle ||
     !elements.metaDescription
   ) {
-    console.warn('[PRODUCT SEO] Required elements not found.');
+    console.warn(
+      '[PRODUCT SEO] Required elements not found.'
+    );
+
     return;
   }
 
   bindEvents();
+
   updateCounters();
 
   initialized = true;
 }
+
+
+// ========================================
+// DEFAULT EXPORT
+// ========================================
 
 export default initProductSEO;

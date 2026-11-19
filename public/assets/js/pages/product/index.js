@@ -17,6 +17,7 @@ let currentSignal = null;
 let productFormModule = null;
 let formOpen = false;
 let formOpening = false;
+let returnToIndexAfterStockAdd = false;
 
 let products = [];
 let searchText = '';
@@ -53,6 +54,7 @@ function getProductName(product) {
 
 function getProductStock(product) {
   return Number(
+    product.summary?.totalStock ??
     product.availableStock ??
     product.availableQuantity ??
     product.totalStock ??
@@ -74,6 +76,7 @@ function getProductStatus(product) {
 function getProductImage(product) {
   const imageData = product.image ||
     product.thumbnail ||
+    product.images?.find?.(image => image?.isMain === true) ||
     product.images?.[0] ||
     '';
 
@@ -84,6 +87,7 @@ function getProductImage(product) {
 
 function getProductPrice(product) {
   return Number(
+    product.summary?.minPrice ??
     product.sellingPrice ??
     product.price ??
     product.pricing?.sellingPrice ??
@@ -160,10 +164,10 @@ function renderStockPickerOptions() {
     option.textContent = [
       getProductName(product),
       product.productCode ||
-        product.basic?.productCode ||
-        product.sku ||
-        product.basic?.sku ||
-        ''
+      product.basic?.productCode ||
+      product.sku ||
+      product.basic?.sku ||
+      ''
     ].filter(Boolean).join(' — ');
 
     select.appendChild(option);
@@ -301,7 +305,58 @@ async function openProductView(product) {
 
 
 
+async function archiveProduct(productId) {
+  const id = String(productId || '');
 
+  if (!id) return false;
+
+  const product = products.find(item => String(item.id) === id);
+
+  if (!product || getProductStatus(product) === 'archived') {
+    return false;
+  }
+
+  const confirmed = window.confirm(
+    `Archive "${getProductName(product)}"?\n\n` +
+    'Productটি active store থেকে সরানো হবে। ' +
+    'Product ও Purchase Lot history সংরক্ষিত থাকবে।'
+  );
+
+  if (!confirmed) return false;
+
+  try {
+    await productApiRequest(
+      `/api/products/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    );
+
+    products = products.filter(item => String(item.id) !== id);
+    selectedProductIds.delete(id);
+
+    if (viewProductId === id) {
+      closeProductView();
+    }
+
+    renderSummary();
+    renderProductTable();
+
+    showMessage(
+      'Product archived successfully. Purchase history সংরক্ষিত আছে।',
+      'success'
+    );
+
+    return true;
+  } catch (error) {
+    console.error('[PRODUCT ARCHIVE]', error);
+
+    showMessage(
+      error.message || 'Product archive করা যায়নি।',
+      'error'
+    );
+
+    return false;
+  }
+}
 
 
 
@@ -342,11 +397,11 @@ async function activateProductIds(productIds) {
     products = products.map(product => (
       ids.includes(product.id)
         ? {
-            ...product,
-            ...(updates.get(product.id) || {}),
-            active: true,
-            status: 'active'
-          }
+          ...product,
+          ...(updates.get(product.id) || {}),
+          active: true,
+          status: 'active'
+        }
         : product
     ));
 
@@ -380,16 +435,25 @@ function handleLotCreated(event) {
   const productId = String(event.detail?.productId || '');
   const updatedProduct = event.detail?.product;
 
-  if (!productId || !updatedProduct) return;
+  if (!productId) return;
 
-  products = products.map(product => (
-    product.id === productId
-      ? { ...product, ...updatedProduct, id: productId }
-      : product
-  ));
+  if (updatedProduct) {
+    products = products.map(product => (
+      product.id === productId
+        ? { ...product, ...updatedProduct, id: productId }
+        : product
+    ));
 
-  renderSummary();
-  renderProductTable();
+    renderSummary();
+    renderProductTable();
+  }
+
+  if (returnToIndexAfterStockAdd) {
+    returnToIndexAfterStockAdd = false;
+    closeProductForm();
+    showMessage('Stock added successfully.', 'success');
+    void loadProducts();
+  }
 }
 
 function handleProductSaved(event) {
@@ -409,10 +473,10 @@ function handleProductSaved(event) {
   );
   const nextProducts = existingProduct
     ? products.map(product => (
-        product.id === productId
-          ? { ...product, ...normalizedProduct }
-          : product
-      ))
+      product.id === productId
+        ? { ...product, ...normalizedProduct }
+        : product
+    ))
     : [normalizedProduct, ...products];
 
   setProducts(nextProducts);
@@ -645,9 +709,9 @@ function createProductRow(product) {
     ['view', 'View'],
     ['edit', 'Edit'],
     ['stock', 'Add Stock'],
-    ['lots', 'Lots']
+    ['lots', 'Lots'],
+    ...(status !== 'archived' ? [['archive', 'Archive']] : [])
   ];
-
   actions.forEach(([action, label]) => {
     const button = document.createElement('button');
 
@@ -843,7 +907,8 @@ async function loadProducts({ announce = false } = {}) {
 async function openProductForm(product = null, {
   openLot = false,
   focusLots = false,
-  lotId = null
+  lotId = null,
+  returnAfterStockAdd = false
 } = {}) {
   if (!pageRoot || formOpen || formOpening) return false;
 
@@ -899,6 +964,7 @@ async function openProductForm(product = null, {
     }
 
     formOpen = true;
+    returnToIndexAfterStockAdd = returnAfterStockAdd === true;
 
     if (openLot) {
       const lotButton = form.querySelector('#product-lot-create');
@@ -923,6 +989,8 @@ async function openProductForm(product = null, {
 
   } catch (error) {
     console.error('[PRODUCT FORM]', error);
+
+    returnToIndexAfterStockAdd = false;
 
     showMessage(
       error.message || 'Product Form open করা যায়নি।',
@@ -951,6 +1019,7 @@ function closeProductForm() {
   productFormModule = null;
   formOpen = false;
   formOpening = false;
+  returnToIndexAfterStockAdd = false;
 
   renderDashboardContent();
 }
@@ -1130,15 +1199,18 @@ function renderDashboardContent() {
           <div class="product-view-body" id="product-view-body"></div>
 
           <div class="product-modal-actions product-view-actions">
-            <button type="button" class="btn btn-secondary"
-              data-products-action="close-view">Close</button>
+  <button type="button" class="btn btn-secondary"
+    data-products-action="close-view">Close</button>
 
-            <button type="button" class="btn btn-secondary"
-              data-products-action="edit-view">Edit Product</button>
+  <button type="button" class="btn btn-secondary"
+    data-products-action="edit-view">Edit Product</button>
 
-            <button type="button" class="btn btn-primary"
-              data-products-action="activate-view">Activate Product</button>
-          </div>
+  <button type="button" class="btn btn-danger"
+    data-products-action="archive-view">Archive Product</button>
+
+  <button type="button" class="btn btn-primary"
+    data-products-action="activate-view">Activate Product</button>
+</div>
         </div>
       </div>
 
@@ -1177,6 +1249,7 @@ export function render() {
 
   formOpen = false;
   formOpening = false;
+  returnToIndexAfterStockAdd = false;
   products = [];
   searchText = '';
   statusFilter = 'all';
@@ -1222,6 +1295,17 @@ async function handleAction(event) {
     return;
   }
 
+
+    if (action === 'archive-view') {
+    const productId = button.dataset.productId || viewProductId;
+
+    if (productId) {
+      await archiveProduct(productId);
+    }
+
+    return;
+  }
+
   if (action === 'edit-view') {
     const productId = button.dataset.productId || viewProductId;
     const product = products.find(item => item.id === productId);
@@ -1247,7 +1331,10 @@ async function handleAction(event) {
     }
 
     if (products.length === 1) {
-      await openProductForm(products[0], { openLot: true });
+      await openProductForm(products[0], {
+        openLot: true,
+        returnAfterStockAdd: true
+      });
       return;
     }
 
@@ -1270,7 +1357,10 @@ async function handleAction(event) {
     }
 
     closeStockPicker();
-    await openProductForm(product, { openLot: true });
+    await openProductForm(product, {
+      openLot: true,
+      returnAfterStockAdd: true
+    });
     return;
   }
 
@@ -1298,7 +1388,10 @@ async function handleProductAction(event) {
   if (!product) return;
 
   if (action === 'stock') {
-    await openProductForm(product, { openLot: true });
+    await openProductForm(product, {
+      openLot: true,
+      returnAfterStockAdd: true
+    });
     return;
   }
 
@@ -1309,6 +1402,11 @@ async function handleProductAction(event) {
 
   if (action === 'edit') {
     openProductForm(product);
+    return;
+  }
+
+  if (action === 'archive') {
+    await archiveProduct(productId);
     return;
   }
 
@@ -1476,6 +1574,7 @@ export function cleanup() {
   productsLoading = false;
   formOpen = false;
   formOpening = false;
+  returnToIndexAfterStockAdd = false;
   selectedProductIds = new Set();
   viewProductId = null;
   activationInProgress = false;

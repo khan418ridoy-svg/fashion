@@ -1,7 +1,8 @@
+
 'use strict';
 
-// Inventory is calculated from variants when variants exist. Without
-// variants, Total Stock and Low Stock Variants remain manually editable.
+// Inventory is calculated from variants when variants exist.
+// Without variants, Total Stock and Low Stock Variants remain manually editable.
 
 import {
   getProductElement,
@@ -15,16 +16,20 @@ const SELECTORS = {
   stockStatus: '#product-stock-status'
 };
 
-let inventoryData = {
-  manualTotalStock: 0,
-  manualLowStockCount: 0,
-  totalStock: 0,
-  lowStockCount: 0,
-  stockStatus: false,
-  variants: []
-};
+function createEmptyInventory() {
+  return {
+    manualTotalStock: 0,
+    manualLowStockCount: 0,
+    totalStock: 0,
+    lowStockCount: 0,
+    stockStatus: false,
+    variants: []
+  };
+}
 
+let inventoryData = createEmptyInventory();
 let initialized = false;
+let boundElements = null;
 
 function getElements() {
   return {
@@ -37,20 +42,25 @@ function getElements() {
 
 function toNonNegativeInteger(value) {
   const number = Number(value);
-  return Number.isFinite(number)
-    ? Math.max(0, Math.floor(number))
-    : 0;
+
+  if (!Number.isFinite(number)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor(number));
 }
 
 function normalizeVariants(variants = []) {
-  return Array.isArray(variants)
-    ? variants.map(variant => ({
-        color: String(variant?.color || ''),
-        size: String(variant?.size || ''),
-        stock: toNonNegativeInteger(variant?.stock),
-        lowStockAlert: toNonNegativeInteger(variant?.lowStockAlert)
-      }))
-    : [];
+  if (!Array.isArray(variants)) {
+    return [];
+  }
+
+  return variants.map(variant => ({
+    color: String(variant?.color || ''),
+    size: String(variant?.size || ''),
+    stock: toNonNegativeInteger(variant?.stock),
+    lowStockAlert: toNonNegativeInteger(variant?.lowStockAlert)
+  }));
 }
 
 export function getProductStockStatus(totalStock) {
@@ -107,17 +117,24 @@ function renderInventorySummary() {
     elements.stockStatus.value = inventoryData.stockStatus
       ? 'true'
       : 'false';
+
     elements.stockStatus.readOnly = true;
   }
 }
+
+// ========================================
+// DATA
+// ========================================
 
 export function setProductInventoryData(data = {}) {
   inventoryData.manualTotalStock = toNonNegativeInteger(
     data.manualTotalStock ?? data.totalStock
   );
+
   inventoryData.manualLowStockCount = toNonNegativeInteger(
     data.manualLowStockCount ?? data.lowStockCount
   );
+
   inventoryData.variants = normalizeVariants(data.variants);
 
   renderInventorySummary();
@@ -125,6 +142,7 @@ export function setProductInventoryData(data = {}) {
 
 export function setProductInventoryVariants(variants = []) {
   inventoryData.variants = normalizeVariants(variants);
+
   renderInventorySummary();
 }
 
@@ -141,94 +159,178 @@ export function getProductInventoryData() {
   };
 }
 
+// ========================================
+// VALIDATION
+// ========================================
+
 export function validateProductInventory() {
   calculateInventory();
 
-  if (!Number.isSafeInteger(inventoryData.totalStock)) {
-    showProductMessage('Total Stock পূর্ণসংখ্যা হতে হবে।', 'warning');
+  if (
+    !Number.isSafeInteger(inventoryData.totalStock) ||
+    inventoryData.totalStock < 0
+  ) {
+    showProductMessage(
+      'Total Stock একটি নিরাপদ non-negative পূর্ণসংখ্যা হতে হবে।',
+      'warning'
+    );
+
     return false;
   }
 
-  if (!Number.isSafeInteger(inventoryData.lowStockCount)) {
-    showProductMessage('Low Stock Variants পূর্ণসংখ্যা হতে হবে।', 'warning');
+  if (
+    !Number.isSafeInteger(inventoryData.lowStockCount) ||
+    inventoryData.lowStockCount < 0
+  ) {
+    showProductMessage(
+      'Low Stock Variants একটি non-negative পূর্ণসংখ্যা হতে হবে।',
+      'warning'
+    );
+
     return false;
+  }
+
+  for (const variant of inventoryData.variants) {
+    if (
+      !Number.isSafeInteger(variant.stock) ||
+      variant.stock < 0 ||
+      !Number.isSafeInteger(variant.lowStockAlert) ||
+      variant.lowStockAlert < 0
+    ) {
+      showProductMessage(
+        'প্রতিটি variant-এর stock এবং low-stock alert সঠিক পূর্ণসংখ্যা হতে হবে।',
+        'warning'
+      );
+
+      return false;
+    }
   }
 
   return true;
 }
 
+// ========================================
+// RESET
+// ========================================
+
 export function resetProductInventory() {
-  inventoryData = {
-    manualTotalStock: 0,
-    manualLowStockCount: 0,
-    totalStock: 0,
-    lowStockCount: 0,
-    stockStatus: false,
-    variants: []
-  };
+  inventoryData = createEmptyInventory();
+
+  renderInventorySummary();
+}
+
+// ========================================
+// EVENTS
+// ========================================
+
+function handleTotalStockInput() {
+  if (!boundElements?.totalStock) return;
+  if (inventoryData.variants.length > 0) return;
+
+  inventoryData.manualTotalStock = toNonNegativeInteger(
+    boundElements.totalStock.value
+  );
+
+  renderInventorySummary();
+}
+
+function handleLowStockCountInput() {
+  if (!boundElements?.lowStockCount) return;
+  if (inventoryData.variants.length > 0) return;
+
+  inventoryData.manualLowStockCount = toNonNegativeInteger(
+    boundElements.lowStockCount.value
+  );
 
   renderInventorySummary();
 }
 
 function handleVariantsChanged(event) {
-  setProductInventoryVariants(event.detail?.variants || []);
+  setProductInventoryVariants(
+    event.detail?.variants || []
+  );
+}
+
+function removeInputEvents() {
+  if (!boundElements) return;
+
+  boundElements.totalStock?.removeEventListener(
+    'input',
+    handleTotalStockInput
+  );
+
+  boundElements.lowStockCount?.removeEventListener(
+    'input',
+    handleLowStockCountInput
+  );
+
+  boundElements = null;
 }
 
 function bindEvents() {
-  const elements = getElements();
+  removeInputEvents();
 
-  if (elements.container?.dataset.inventoryEventsBound !== 'true') {
-    elements.totalStock?.addEventListener('input', () => {
-      if (inventoryData.variants.length) return;
-      inventoryData.manualTotalStock = toNonNegativeInteger(
-        elements.totalStock.value
-      );
-      renderInventorySummary();
-    });
+  boundElements = getElements();
 
-    elements.lowStockCount?.addEventListener('input', () => {
-      if (inventoryData.variants.length) return;
-      inventoryData.manualLowStockCount = toNonNegativeInteger(
-        elements.lowStockCount.value
-      );
-      renderInventorySummary();
-    });
+  boundElements.totalStock?.addEventListener(
+    'input',
+    handleTotalStockInput
+  );
 
-    if (elements.container) {
-      elements.container.dataset.inventoryEventsBound = 'true';
-    }
-  }
+  boundElements.lowStockCount?.addEventListener(
+    'input',
+    handleLowStockCountInput
+  );
 
   document.removeEventListener(
     'product:variants-changed',
     handleVariantsChanged
   );
+
   document.addEventListener(
     'product:variants-changed',
     handleVariantsChanged
   );
 }
 
+// ========================================
+// INIT
+// ========================================
+
 export function initProductInventory({ force = false } = {}) {
-  if (initialized && !force) return;
+  if (initialized && !force) {
+    return;
+  }
 
   const { container } = getElements();
 
   if (!container) {
-    console.warn('[PRODUCT INVENTORY] Inventory container not found.');
+    console.warn(
+      '[PRODUCT INVENTORY] Inventory container not found.'
+    );
+
     return;
   }
 
   bindEvents();
+
   initialized = true;
+
   renderInventorySummary();
 }
 
+// ========================================
+// CLEANUP
+// ========================================
+
 export function cleanupProductInventory() {
+  removeInputEvents();
+
   document.removeEventListener(
     'product:variants-changed',
     handleVariantsChanged
   );
+
   initialized = false;
 }
 

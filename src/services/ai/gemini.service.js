@@ -713,6 +713,7 @@ async function generateText(options = {}) {
   usage.totalRequests++;
 
   const errors = [];
+  const modelNotFoundCounts = new Map();
   let attemptNumber = 0;
 
   const activeModels = models.filter(
@@ -732,9 +733,10 @@ async function generateText(options = {}) {
 
   const totalAttempts = activeModels.length * apiKeys.length;
 
-  // Model priority first, then API key fallback.
-  for (const model of activeModels) {
-    for (let keyIndex = 0; keyIndex < apiKeys.length; keyIndex++) {
+  // Exhaust the preferred model order for key 1 before moving to key 2.
+  // Example: model 1/key 1 -> model 2/key 1 -> model 1/key 2.
+  for (let keyIndex = 0; keyIndex < apiKeys.length; keyIndex++) {
+    for (const model of activeModels) {
       attemptNumber++;
 
       const apiKey = apiKeys[keyIndex];
@@ -779,10 +781,17 @@ async function generateText(options = {}) {
             ? error
             : new GeminiError(error.message);
 
-        // A 404 means this model is not available to this API.
-        // Cache it to avoid repeatedly trying it.
+        // Only disable a model globally after every configured key
+        // has confirmed that it is unavailable.
         if (geminiError.status === 404) {
-          markModelUnavailable(model);
+          const notFoundCount =
+            (modelNotFoundCounts.get(model) || 0) + 1;
+
+          modelNotFoundCounts.set(model, notFoundCount);
+
+          if (notFoundCount === apiKeys.length) {
+            markModelUnavailable(model);
+          }
         }
 
         const errorInfo = {
@@ -871,9 +880,9 @@ function getHealthCheckModels(discoveredModels) {
 // HEALTH CHECK
 // ======================================================
 // Dedicated test. Does NOT use generateText() fallback.
-// Tests a limited number of eligible text models in priority
-// order, with key fallback for each model.
-// Stops after the first successful text response.
+// Tests every selected model/API-key combination in fallback
+// order. Unlike generateText(), it does not stop at the first
+// successful text response.
 
 async function healthCheck(options = {}) {
   const startedAt = Date.now();
@@ -919,11 +928,15 @@ async function healthCheck(options = {}) {
   }
 
   const attempts = [];
+  const modelNotFoundCounts = new Map();
 
   usage.totalRequests++;
 
-  for (const model of models) {
-    for (let keyIndex = 0; keyIndex < apiKeys.length; keyIndex++) {
+  let firstSuccess = null;
+
+  // Match generateText() ordering, but always run the full matrix.
+  for (let keyIndex = 0; keyIndex < apiKeys.length; keyIndex++) {
+    for (const model of models) {
       const apiKey = apiKeys[keyIndex];
       const attemptStartedAt = Date.now();
 
@@ -962,18 +975,13 @@ async function healthCheck(options = {}) {
         };
 
         attempts.push(attempt);
-        recordSuccessfulUsage(result);
 
-        return {
-          success: true,
-          model: result.model,
-          keyNumber: keyIndex + 1,
-          response: result.text,
-          httpStatus: result.httpStatus,
-          finishReason: result.finishReason,
-          attempts,
-          durationMs: Date.now() - startedAt
-        };
+        if (!firstSuccess) {
+          firstSuccess = {
+            result,
+            keyNumber: keyIndex + 1
+          };
+        }
 
       } catch (error) {
         usage.fallbackAttempts++;
@@ -984,7 +992,14 @@ async function healthCheck(options = {}) {
             : new GeminiError(error.message);
 
         if (geminiError.status === 404) {
-          markModelUnavailable(model);
+          const notFoundCount =
+            (modelNotFoundCounts.get(model) || 0) + 1;
+
+          modelNotFoundCounts.set(model, notFoundCount);
+
+          if (notFoundCount === apiKeys.length) {
+            markModelUnavailable(model);
+          }
         }
 
         const attempt = {
@@ -1006,6 +1021,29 @@ async function healthCheck(options = {}) {
     }
   }
 
+  const successfulAttempts = attempts.filter(
+    attempt => attempt.success
+  ).length;
+  const failedAttempts = attempts.length - successfulAttempts;
+
+  if (firstSuccess) {
+    recordSuccessfulUsage(firstSuccess.result);
+
+    return {
+      success: true,
+      model: firstSuccess.result.model,
+      keyNumber: firstSuccess.keyNumber,
+      response: firstSuccess.result.text,
+      httpStatus: firstSuccess.result.httpStatus,
+      finishReason: firstSuccess.result.finishReason,
+      testedCombinations: attempts.length,
+      successfulAttempts,
+      failedAttempts,
+      attempts,
+      durationMs: Date.now() - startedAt
+    };
+  }
+
   const finalError = new GeminiError(
     'Health Check failed: all selected text models and API keys were unsuccessful.',
     {
@@ -1018,6 +1056,9 @@ async function healthCheck(options = {}) {
   return {
     success: false,
     error: finalError.message,
+    testedCombinations: attempts.length,
+    successfulAttempts,
+    failedAttempts,
     attempts,
     durationMs: Date.now() - startedAt
   };

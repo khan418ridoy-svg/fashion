@@ -27,10 +27,10 @@ const APP_CONFIG = {
   defaultPage: 'dashboard',
 
 
-cloudinary: {
+  cloudinary: {
     cloudName: 'mqn4vzh2',
     uploadPreset: 'product',
-    folder: 'product' 
+    folder: 'product'
   }
 };
 
@@ -323,19 +323,19 @@ function renderAdminLayout(admin) {
 
 
   // ======================================
-// Purchase Lots Link
-// ======================================
+  // Purchase Lots Link
+  // ======================================
 
-const lotsLink = createElement('a', {
-  className: 'sidebar-link',
-  text: '▤ Purchase Lots',
-  attributes: {
-    href: '#lots'
-  },
-  dataset: {
-    page: 'lots'
-  }
-});
+  const lotsLink = createElement('a', {
+    className: 'sidebar-link',
+    text: '▤ Purchase Lots',
+    attributes: {
+      href: '#lots'
+    },
+    dataset: {
+      page: 'lots'
+    }
+  });
 
   const couponsLink = createElement('a', {
     className: 'sidebar-link',
@@ -450,12 +450,12 @@ const lotsLink = createElement('a', {
 
   navigation.append(
     dashboardLink,
-    ordersLink,
     posLink,
+    productsLink,
+    ordersLink,
     botChatsLink,
     facebookLink,
     reportsLink,
-    productsLink,
     lotsLink,
     couponsLink,
     collectionsGroup,

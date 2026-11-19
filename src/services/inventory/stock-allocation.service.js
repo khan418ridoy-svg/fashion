@@ -12,6 +12,15 @@ const {
   prepareProductChange
 } = require('../product/product-cache.service');
 
+const {
+  prepareProductPrivateContext
+} = require('../product/product-private.service');
+
+const {
+  buildCanonicalProductDocument,
+  getProductTotalStock
+} = require('../product/product-schema.service');
+
 // ========================================
 // Configuration
 // ========================================
@@ -384,9 +393,9 @@ async function allocateStock(payload = {}) {
       );
     }
 
-    const product = productSnapshot.data() || {};
+    const publicProduct = productSnapshot.data() || {};
 
-    if (product.deleted === true) {
+    if (publicProduct.deleted === true) {
       throw createError(
         'Cannot sell a deleted Product.',
         409,
@@ -394,9 +403,21 @@ async function allocateStock(payload = {}) {
       );
     }
 
+    const privateContext = await prepareProductPrivateContext({
+      db,
+      transaction,
+      productId,
+      privateId: publicProduct.privateId || ''
+    });
+    const product = privateContext.hydrate(publicProduct);
+    const storedVariants = Array.isArray(product.variants)
+      ? product.variants
+      : Array.isArray(product.inventory?.variants)
+        ? product.inventory.variants
+        : [];
+
     if (
-      !Array.isArray(product.variants) ||
-      product.variants.length === 0
+      storedVariants.length === 0
     ) {
       throw createError(
         'Product variants not found.',
@@ -430,7 +451,7 @@ async function allocateStock(payload = {}) {
     // PREPARE PRODUCT VARIANTS
     // ------------------------------------
 
-    const productVariants = product.variants.map(
+    const productVariants = storedVariants.map(
       variant => ({ ...variant })
     );
 
@@ -516,9 +537,7 @@ async function allocateStock(payload = {}) {
       );
     }
 
-    const productTotalStock = Number(
-      product.totalStock || 0
-    );
+    const productTotalStock = getProductTotalStock(product);
 
     if (
       !Number.isSafeInteger(productTotalStock) ||
@@ -736,11 +755,15 @@ async function allocateStock(payload = {}) {
       productTotalStock - totalRequestedQuantity;
 
     const updatedProduct = {
+      ...product,
       variants: productVariants,
-      totalStock: updatedTotalStock,
       version: Number(product.version || 0) + 1,
       updatedAt: now
     };
+    const privatePlan = privateContext.prepare(updatedProduct);
+    const canonicalProduct = buildCanonicalProductDocument(
+      privatePlan.publicProduct
+    );
 
     // ------------------------------------
     // ALLOCATION HISTORY
@@ -788,10 +811,12 @@ async function allocateStock(payload = {}) {
       transaction.update(lot.ref, lot.data);
     }
 
-    transaction.update(
+    transaction.set(
       productRef,
-      updatedProduct
+      canonicalProduct
     );
+
+    privatePlan.write(transaction);
 
     transaction.create(
       allocationRef,

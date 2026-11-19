@@ -4,7 +4,7 @@
 import { createElement } from '../../helpers.js';
 
 // ========================================
-// Configuration
+// CONFIGURATION
 // ========================================
 
 const PRODUCT_FIELDS = {
@@ -47,8 +47,30 @@ const PRODUCT_FIELDS = {
   }
 };
 
+const DEFAULT_BRAND = 'Nishat Fashion';
+const MAX_SLUG_LENGTH = 150;
+
 // ========================================
-// Create Field
+// SAFE VALUE
+// ========================================
+
+function toSafeString(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (
+    typeof value === 'object' ||
+    typeof value === 'function'
+  ) {
+    return '';
+  }
+
+  return String(value).trim();
+}
+
+// ========================================
+// CREATE FIELD
 // ========================================
 
 function createField(fieldName, config, value = '') {
@@ -80,7 +102,7 @@ function createField(fieldName, config, value = '') {
     }
   });
 
-  input.value = value || '';
+  input.value = toSafeString(value);
 
   wrapper.append(
     label,
@@ -100,10 +122,18 @@ function createField(fieldName, config, value = '') {
 }
 
 // ========================================
-// Render Product Basic Information
+// RENDER PRODUCT BASIC INFORMATION
 // ========================================
 
 export function renderProductBasic(product = {}) {
+  if (
+    !product ||
+    typeof product !== 'object' ||
+    Array.isArray(product)
+  ) {
+    product = {};
+  }
+
   const section = createElement('section', {
     className: 'product-form-section product-basic-section',
     attributes: {
@@ -111,7 +141,6 @@ export function renderProductBasic(product = {}) {
     }
   });
 
-  // Section Header
   const header = createElement('div', {
     className: 'product-section-header'
   });
@@ -129,12 +158,10 @@ export function renderProductBasic(product = {}) {
     description
   );
 
-  // Fields Container
   const fieldsContainer = createElement('div', {
     className: 'product-basic-grid'
   });
 
-  // Create Fields
   const fields = [
     'name',
     'brand',
@@ -148,10 +175,14 @@ export function renderProductBasic(product = {}) {
 
     const defaultValue =
       fieldName === 'brand'
-        ? 'Nishat Fashion'
+        ? DEFAULT_BRAND
         : '';
 
-    const value = product[fieldName] ?? defaultValue;
+    const value =
+      product[fieldName] !== undefined &&
+      product[fieldName] !== null
+        ? product[fieldName]
+        : defaultValue;
 
     fieldsContainer.append(
       createField(fieldName, config, value)
@@ -167,76 +198,125 @@ export function renderProductBasic(product = {}) {
 }
 
 // ========================================
-// Slug Generator
+// SLUG GENERATOR
 // ========================================
 
 export function generateProductSlug(value = '') {
-  return String(value)
-    .trim()
+  const normalized = toSafeString(value)
     .toLowerCase()
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 140);
+    .replace(/^-+|-+$/g, '');
+
+  return normalized
+    .slice(0, MAX_SLUG_LENGTH)
+    .replace(/-+$/g, '');
 }
 
-function createUniqueSlug(value, existingSlugs = [], currentSlug = '') {
+// ========================================
+// CREATE UNIQUE SLUG
+// ========================================
+
+function createUniqueSlug(
+  value,
+  existingSlugs = [],
+  currentSlug = ''
+) {
   const base = generateProductSlug(value) || 'product';
+
+  const current = toSafeString(currentSlug).toLowerCase();
+
   const reserved = new Set(
     existingSlugs
-      .map(slug => String(slug || '').trim().toLowerCase())
-      .filter(slug => slug && slug !== String(currentSlug).toLowerCase())
+      .map(slug => toSafeString(slug).toLowerCase())
+      .filter(slug => slug && slug !== current)
   );
 
-  if (!reserved.has(base)) return base;
-
-  let suffix = 2;
-
-  while (reserved.has(`${base}-${suffix}`)) {
-    suffix += 1;
+  if (!reserved.has(base)) {
+    return base;
   }
 
-  return `${base}-${suffix}`;
+  let suffix = 2;
+  let candidate = '';
+
+  do {
+    const suffixText = `-${suffix}`;
+    const availableLength =
+      MAX_SLUG_LENGTH - suffixText.length;
+
+    const trimmedBase = base
+      .slice(0, availableLength)
+      .replace(/-+$/g, '');
+
+    candidate = `${trimmedBase}${suffixText}`;
+
+    suffix += 1;
+  } while (reserved.has(candidate));
+
+  return candidate;
 }
 
 // ========================================
-// Bind Product Basic Events
+// BIND PRODUCT BASIC EVENTS
 // ========================================
 
-export function bindProductBasicEvents(container, options = {}) {
+export function bindProductBasicEvents(
+  container,
+  options = {}
+) {
+  if (!container || typeof container.querySelector !== 'function') {
+    console.warn('[PRODUCT BASIC] Invalid container.');
+    return () => {};
+  }
+
   const nameInput = container.querySelector(
     '[data-product-field="name"]'
   );
 
-  const slugInput = container.querySelector('#product-slug');
+  const slugInput = container.querySelector(
+    '#product-slug'
+  );
 
   if (!nameInput || !slugInput) {
-    return;
+    console.warn('[PRODUCT BASIC] Name or slug field not found.');
+    return () => {};
   }
 
   const existingSlugs = Array.isArray(options.existingSlugs)
     ? options.existingSlugs
+        .map(toSafeString)
+        .filter(Boolean)
     : [];
 
-  const initialSlug = String(
-    options.currentSlug || slugInput.value || ''
-  ).trim();
+  const initialSlug = toSafeString(
+    options.currentSlug || slugInput.value
+  );
 
   slugInput.readOnly = true;
-  slugInput.dataset.existingSlugs = JSON.stringify(existingSlugs);
+
+  slugInput.dataset.existingSlugs = JSON.stringify(
+    existingSlugs
+  );
+
   slugInput.dataset.currentSlug = initialSlug;
 
   function handleNameInput() {
-    slugInput.value = createUniqueSlug(
-      nameInput.value,
-      existingSlugs,
-      initialSlug
-    );
+    const name = toSafeString(nameInput.value);
+
+    slugInput.value = name
+      ? createUniqueSlug(
+          name,
+          existingSlugs,
+          initialSlug
+        )
+      : '';
 
     slugInput.dispatchEvent(
-      new Event('input', { bubbles: true })
+      new Event('input', {
+        bubbles: true
+      })
     );
   }
 
@@ -249,7 +329,13 @@ export function bindProductBasicEvents(container, options = {}) {
     handleNameInput();
   }
 
-  return () => {
+  let cleaned = false;
+
+  return function cleanup() {
+    if (cleaned) return;
+
+    cleaned = true;
+
     nameInput.removeEventListener(
       'input',
       handleNameInput
@@ -258,11 +344,15 @@ export function bindProductBasicEvents(container, options = {}) {
 }
 
 // ========================================
-// Get Product Basic Data
+// GET PRODUCT BASIC DATA
 // ========================================
 
 export function getProductBasicData(container) {
   const data = {};
+
+  if (!container || typeof container.querySelector !== 'function') {
+    return data;
+  }
 
   Object.keys(PRODUCT_FIELDS).forEach(fieldName => {
     const input = container.querySelector(
@@ -270,7 +360,7 @@ export function getProductBasicData(container) {
     );
 
     data[fieldName] = input
-      ? input.value.trim()
+      ? toSafeString(input.value)
       : '';
   });
 
@@ -278,11 +368,25 @@ export function getProductBasicData(container) {
 }
 
 // ========================================
-// Set Product Basic Data
+// SET PRODUCT BASIC DATA
 // ========================================
 
-export function setProductBasicData(product = {}, container) {
-  if (!container) {
+export function setProductBasicData(
+  product = {},
+  container
+) {
+  if (
+    !container ||
+    typeof container.querySelector !== 'function'
+  ) {
+    return;
+  }
+
+  if (
+    !product ||
+    typeof product !== 'object' ||
+    Array.isArray(product)
+  ) {
     return;
   }
 
@@ -291,12 +395,27 @@ export function setProductBasicData(product = {}, container) {
       `[data-product-field="${fieldName}"]`
     );
 
-    if (!input) {
-      return;
-    }
+    if (!input) return;
 
-    if (product[fieldName] !== undefined) {
-      input.value = product[fieldName] ?? '';
+    if (
+      Object.prototype.hasOwnProperty.call(
+        product,
+        fieldName
+      )
+    ) {
+      input.value = toSafeString(product[fieldName]);
     }
   });
 }
+
+// ========================================
+// EXPORTS
+// ========================================
+
+export default {
+  renderProductBasic,
+  generateProductSlug,
+  bindProductBasicEvents,
+  getProductBasicData,
+  setProductBasicData
+};
