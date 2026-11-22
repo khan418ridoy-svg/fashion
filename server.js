@@ -156,7 +156,12 @@ app.use(cors({
 
 app.use(express.json({
   limit: '1mb',
-  strict: true
+  strict: true,
+
+  // Meta webhook signature verification
+  verify(req, res, buffer) {
+    req.rawBody = Buffer.from(buffer);
+  }
 }));
 
 app.use(express.urlencoded({
@@ -306,6 +311,7 @@ const settingsRoutes = require('./src/routes/settings.routes');
 const couponRoutes = require('./src/routes/coupon.routes');
 const aiRoutes = require('./src/routes/ai.routes');
 const cloudinaryRoutes = require('./src/routes/cloudinary.routes');
+const facebookRoutes = require('./src/facebook/facebook.routes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/taxonomy', taxonomyRoutes);
@@ -317,6 +323,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/cloudinary', cloudinaryRoutes);
+app.use('/api/facebook', facebookRoutes);
 
 // ========================================
 // API Not Found
