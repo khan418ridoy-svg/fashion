@@ -1,0 +1,71 @@
+/* Nishat Fashion Facebook workspace */
+.facebook-page {
+  --fb-border: var(--border-color, #e5e7eb);
+  --fb-muted: var(--text-muted, #6b7280);
+  --fb-surface: var(--card-bg, #fff);
+  color: var(--text-color, #1f2937);
+}
+
+.fb-header,
+.fb-card-heading,
+.fb-form-actions,
+.fb-preview-brand,
+.fb-preview-actions,
+.fb-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.fb-header { margin-bottom: 22px; }
+.fb-header h1 { margin: 4px 0; font-size: 1.55rem; }
+.fb-header p, .fb-muted { color: var(--fb-muted); margin: 5px 0 0; }
+.fb-eyebrow { color: var(--fb-muted); font-size: .7rem; font-weight: 800; letter-spacing: .12em; }
+.fb-status-pill { border: 1px solid var(--fb-border); border-radius: 999px; padding: 7px 12px; font-size: .78rem; }
+.fb-status-pill.is-connected { color: #087443; border-color: #9bd8b8; background: #effaf4; }
+
+.fb-tabs { display: flex; gap: 7px; overflow-x: auto; border-bottom: 1px solid var(--fb-border); margin-bottom: 20px; }
+.fb-tab { border: 0; background: transparent; padding: 11px 13px; white-space: nowrap; color: var(--fb-muted); cursor: pointer; border-bottom: 2px solid transparent; }
+.fb-tab.is-active { color: var(--text-color, #111827); border-bottom-color: #1877f2; font-weight: 700; }
+.fb-content { min-width: 0; }
+
+.fb-overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.fb-card { background: var(--fb-surface); border: 1px solid var(--fb-border); border-radius: 14px; padding: 20px; min-width: 0; }
+.fb-card h2, .fb-card h3 { margin: 7px 0 10px; }
+.fb-card p { line-height: 1.55; }
+.fb-card-wide { grid-column: 1 / -1; }
+.fb-settings-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.fb-post-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 16px; }
+.fb-field { display: grid; gap: 7px; margin: 14px 0; font-weight: 650; }
+.fb-field input, .fb-field textarea { width: 100%; border: 1px solid var(--fb-border); border-radius: 9px; padding: 11px 12px; background: var(--fb-surface); color: inherit; font: inherit; }
+.fb-field textarea { resize: vertical; min-height: 150px; }
+.fb-button { border: 1px solid var(--fb-border); border-radius: 9px; background: var(--fb-surface); color: inherit; padding: 10px 15px; cursor: pointer; font: inherit; font-weight: 650; }
+.fb-button-primary { background: #1877f2; border-color: #1877f2; color: white; }
+.fb-button:disabled { opacity: .6; cursor: wait; }
+.fb-form-actions { justify-content: flex-start; margin-top: 16px; }
+.fb-feedback { min-height: 1.4em; color: var(--fb-muted); font-size: .88rem; }
+.fb-switch-row { padding: 13px 0; border-bottom: 1px solid var(--fb-border); }
+.fb-switch-row span { display: grid; gap: 3px; }
+.fb-switch-row small { color: var(--fb-muted); }
+.fb-switch-row input { width: 18px; height: 18px; accent-color: #1877f2; }
+.fb-check-list { padding-left: 20px; line-height: 2; }
+.fb-preview { border: 1px solid var(--fb-border); border-radius: 12px; overflow: hidden; padding: 14px; margin-top: 12px; }
+.fb-preview-brand { justify-content: flex-start; }
+.fb-preview-brand > div { display: grid; gap: 2px; }
+.fb-preview-brand small { color: var(--fb-muted); }
+.fb-avatar { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: #1877f2; color: white; font-weight: 800; }
+.fb-preview > p { min-height: 80px; white-space: normal; overflow-wrap: anywhere; }
+.fb-preview-actions { justify-content: space-around; border-top: 1px solid var(--fb-border); padding-top: 12px; color: var(--fb-muted); font-size: .85rem; }
+.fb-empty-state { text-align: center; padding: 42px 20px; }
+.fb-workflow { display: grid; gap: 10px; margin-top: 18px; }
+.fb-workflow-step { display: grid; grid-template-columns: 42px 1fr; gap: 2px 12px; padding: 13px; border: 1px solid var(--fb-border); border-radius: 10px; }
+.fb-workflow-step > span { grid-row: span 2; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #eaf2ff; color: #145fc0; font-weight: 800; }
+.fb-workflow-step small { color: var(--fb-muted); }
+.fb-toast { position: fixed; right: 20px; bottom: 20px; z-index: 1000; }
+
+@media (max-width: 800px) {
+  .fb-overview-grid, .fb-settings-layout, .fb-post-layout { grid-template-columns: 1fr; }
+  .fb-card-wide { grid-column: auto; }
+  .fb-header { align-items: flex-start; flex-direction: column; }
+}
