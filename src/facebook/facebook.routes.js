@@ -42,6 +42,9 @@ const router = express.Router();
 const CONNECTION_COLLECTION = 'facebookConnections';
 const CONNECTION_DOC = 'primary';
 
+
+
+const facebookWebhookRouter = require('./facebook.webhook');
 // ========================================
 // Helpers
 // ========================================
@@ -269,7 +272,7 @@ router.get('/oauth/callback', async (req, res) => {
 // Admin Authentication
 // All routes below require adminAuth
 // ========================================
-
+router.use('/webhook', facebookWebhookRouter);
 router.use(adminAuth);
 
 // ========================================
