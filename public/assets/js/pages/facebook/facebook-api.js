@@ -65,37 +65,22 @@ async function request(path, options = {}) {
  */
 export const facebookApi = {
 
-  /**
-   * Start Facebook OAuth login.
-   */
   async startOAuth() {
     return request('/oauth/start');
   },
 
-  /**
-   * Get Facebook connection status.
-   */
   async getConnection() {
     return request('/connection');
   },
 
-  /**
-   * Get all accessible Facebook Pages.
-   */
   async getAvailablePages() {
     return request('/pages/available');
   },
 
-  /**
-   * Get selected Facebook Pages.
-   */
   async getSelectedPages() {
     return request('/pages/selected');
   },
 
-  /**
-   * Save selected Facebook Page IDs.
-   */
   async selectPages(selectedPageIds) {
     if (!Array.isArray(selectedPageIds)) {
       throw new Error('selectedPageIds must be an array.');
@@ -109,35 +94,22 @@ export const facebookApi = {
     });
   },
 
-  /**
-   * Disconnect Facebook.
-   */
   async disconnect() {
     return request('/connection', {
       method: 'DELETE'
     });
   },
 
-  /**
-   * Get Facebook settings.
-   */
   async getSettings() {
     return request('/settings');
   },
 
-  /**
-   * Update Facebook settings.
-   */
   async updateSettings(settings) {
     return request('/settings', {
       method: 'PATCH',
       body: JSON.stringify(settings)
     });
   },
-
-
-
-
 
   /**
    * Get products eligible for Facebook posts.
@@ -167,8 +139,6 @@ export const facebookApi = {
     return request(`/posts/products${suffix}`);
   },
 
-
-
   /**
    * Generate Facebook caption for a product.
    */
@@ -188,10 +158,43 @@ export const facebookApi = {
     });
   },
 
+  /**
+   * Publish a product post with backend-selected images.
+   */
+  async publishProductPost(productId, pageId, caption) {
+    if (
+      typeof productId !== 'string' ||
+      !productId.trim()
+    ) {
+      throw new Error('A valid product ID is required.');
+    }
 
+    if (
+      typeof pageId !== 'string' ||
+      !pageId.trim()
+    ) {
+      throw new Error('Please select a Facebook Page.');
+    }
+
+    if (
+      typeof caption !== 'string' ||
+      !caption.trim()
+    ) {
+      throw new Error('Facebook caption cannot be empty.');
+    }
+
+    return request('/posts/publish', {
+      method: 'POST',
+      body: JSON.stringify({
+        productId: productId.trim(),
+        pageId: pageId.trim(),
+        caption: caption.trim()
+      })
+    });
+  },
 
   /**
-   * Publish text post.
+   * Legacy text post method.
    */
   async publishTextPost(message, link) {
     return request('/posts/text', {
@@ -204,7 +207,7 @@ export const facebookApi = {
   },
 
   /**
-   * Publish photo post.
+   * Legacy photo post method.
    */
   async publishPhotoPost(imageUrl, caption) {
     return request('/posts/photo', {
