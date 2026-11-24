@@ -35,13 +35,29 @@ function normalizeLimit(value) {
   return limit;
 }
 
+function normalizeProductId(value) {
+  const id = cleanString(value, 128);
+
+  if (!id) {
+    throw new FacebookError(
+      'Product ID is required.',
+      400,
+      'PRODUCT_ID_REQUIRED'
+    );
+  }
+
+  return id;
+}
+
 function isCloudinaryUrl(value) {
   try {
     const url = new URL(value);
 
     return (
       url.protocol === 'https:' &&
-      url.hostname === 'res.cloudinary.com'
+      url.hostname === 'res.cloudinary.com' &&
+      !url.username &&
+      !url.password
     );
   } catch {
     return false;
@@ -142,12 +158,7 @@ function attachVariantImages(variants, images, mainImage) {
 
     return {
       ...variant,
-
-      // Preview image for this variant.
-      // Use main image when no color image exists.
       imageUrl: matchingImages[0]?.url || mainImage?.url || null,
-
-      // All images matching this variant's color.
       images: matchingImages
     };
   });
@@ -169,7 +180,6 @@ function buildPostImages(images, variants, mainImage) {
     selectedImages.push(...matchingImages);
   }
 
-  // Remove duplicate URLs while preserving order.
   const seen = new Set();
 
   return selectedImages.filter(image => {
@@ -196,6 +206,107 @@ function isEligibleProduct(product) {
 }
 
 // ========================================
+// Build Product
+// ========================================
+
+function buildEligibleProduct(doc) {
+  const product = doc.data() || {};
+
+  if (!isEligibleProduct(product)) {
+    return null;
+  }
+
+  const images = normalizeImages(product.images);
+  const rawVariants = normalizeVariants(product.variants);
+
+  if (!images.length || !rawVariants.length) {
+    return null;
+  }
+
+  const mainImage = getMainImage(images);
+
+  if (!mainImage) {
+    return null;
+  }
+
+  const variants = attachVariantImages(
+    rawVariants,
+    images,
+    mainImage
+  );
+
+  const postImages = buildPostImages(
+    images,
+    rawVariants,
+    mainImage
+  );
+
+  return {
+    id: doc.id,
+
+    name: cleanString(product.name, 300),
+    slug: cleanString(product.slug, 300),
+    sku: cleanString(product.sku, 100),
+    barcode: cleanString(product.barcode, 100),
+
+    shortDescription: cleanString(
+      product.shortDescription,
+      1000
+    ),
+
+    description: cleanString(
+      product.description,
+      5000
+    ),
+
+    images,
+    mainImage,
+    postImages,
+    variants,
+
+    summary: {
+      hasStock: true,
+      totalStock: Number(product.summary?.totalStock) || 0,
+      minPrice: Number(product.summary?.minPrice) || 0,
+      maxPrice: Number(product.summary?.maxPrice) || 0
+    }
+  };
+}
+
+// ========================================
+// Get One Eligible Product
+// ========================================
+
+async function getEligibleProductById(productId) {
+  const id = normalizeProductId(productId);
+
+  const snapshot = await db
+    .collection(PRODUCTS_COLLECTION)
+    .doc(id)
+    .get();
+
+  if (!snapshot.exists) {
+    throw new FacebookError(
+      'Product was not found.',
+      404,
+      'PRODUCT_NOT_FOUND'
+    );
+  }
+
+  const product = buildEligibleProduct(snapshot);
+
+  if (!product) {
+    throw new FacebookError(
+      'This product is not eligible for Facebook publishing.',
+      400,
+      'PRODUCT_NOT_ELIGIBLE'
+    );
+  }
+
+  return product;
+}
+
+// ========================================
 // List Eligible Facebook Products
 // ========================================
 
@@ -213,67 +324,11 @@ async function listEligibleProducts(options = {}) {
   const products = [];
 
   for (const doc of snapshot.docs) {
-    const product = doc.data() || {};
+    const product = buildEligibleProduct(doc);
 
-    if (!isEligibleProduct(product)) {
-      continue;
+    if (product) {
+      products.push(product);
     }
-
-    const images = normalizeImages(product.images);
-    const rawVariants = normalizeVariants(product.variants);
-
-    if (!images.length || !rawVariants.length) {
-      continue;
-    }
-
-    const mainImage = getMainImage(images);
-
-    if (!mainImage) {
-      continue;
-    }
-
-    const variants = attachVariantImages(
-      rawVariants,
-      images,
-      mainImage
-    );
-
-    const postImages = buildPostImages(
-      images,
-      rawVariants,
-      mainImage
-    );
-
-    products.push({
-      id: doc.id,
-
-      name: cleanString(product.name, 300),
-      slug: cleanString(product.slug, 300),
-      sku: cleanString(product.sku, 100),
-      barcode: cleanString(product.barcode, 100),
-
-      shortDescription: cleanString(
-        product.shortDescription,
-        1000
-      ),
-
-      description: cleanString(
-        product.description,
-        5000
-      ),
-
-      images,
-      mainImage,
-      postImages,
-      variants,
-
-      summary: {
-        hasStock: true,
-        totalStock: Number(product.summary?.totalStock) || 0,
-        minPrice: Number(product.summary?.minPrice) || 0,
-        maxPrice: Number(product.summary?.maxPrice) || 0
-      }
-    });
   }
 
   return {
@@ -287,5 +342,6 @@ async function listEligibleProducts(options = {}) {
 // ========================================
 
 module.exports = {
-  listEligibleProducts
+  listEligibleProducts,
+  getEligibleProductById
 };
