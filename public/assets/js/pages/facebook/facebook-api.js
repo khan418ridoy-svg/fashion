@@ -135,6 +135,61 @@ export const facebookApi = {
     });
   },
 
+
+
+
+
+  /**
+   * Get products eligible for Facebook posts.
+   */
+  async getEligibleProducts(options = {}) {
+    const limit = options.limit;
+
+    if (
+      limit !== undefined &&
+      (!Number.isInteger(Number(limit)) ||
+        Number(limit) < 1 ||
+        Number(limit) > 100)
+    ) {
+      throw new Error('Product limit must be between 1 and 100.');
+    }
+
+    const query = new URLSearchParams();
+
+    if (limit !== undefined) {
+      query.set('limit', String(Number(limit)));
+    }
+
+    const suffix = query.toString()
+      ? `?${query.toString()}`
+      : '';
+
+    return request(`/posts/products${suffix}`);
+  },
+
+
+
+  /**
+   * Generate Facebook caption for a product.
+   */
+  async generateCaption(productId) {
+    if (
+      typeof productId !== 'string' ||
+      !productId.trim()
+    ) {
+      throw new Error('A valid product ID is required.');
+    }
+
+    return request('/posts/caption', {
+      method: 'POST',
+      body: JSON.stringify({
+        productId: productId.trim()
+      })
+    });
+  },
+
+
+
   /**
    * Publish text post.
    */

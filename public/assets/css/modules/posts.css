@@ -1,0 +1,191 @@
+/* =====================================================
+   Nishat Fashion — Facebook Posts
+   (Product catalog, product cards, product preview,
+    variant list, Facebook-style post preview)
+   ===================================================== */
+
+/* ---------- 1. Posts section & layout ---------- */
+.fb-posts-section { min-width: 0; }
+
+.fb-posts-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.fb-post-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/* ---------- 2. Product list (posts.js) ---------- */
+.fb-products-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  max-height: 640px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.fb-products-list .fb-empty-state {
+  /* keep empty state inside scroll container tidy */
+  padding: 32px 16px;
+}
+
+.fb-product-card {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--fb-border, #e5e7eb);
+  border-radius: 12px;
+  background: var(--fb-surface, #fff);
+  transition: border-color .15s, box-shadow .15s;
+}
+.fb-product-card:hover {
+  border-color: #c9d4e3;
+}
+
+.fb-product-card-image {
+  width: 96px;
+  height: 96px;
+  max-width: none;
+  object-fit: cover;
+  border-radius: 10px;
+  background: var(--fb-soft, #f3f4f6);
+  display: block;
+}
+
+.fb-product-card-info { min-width: 0; }
+.fb-product-card-info h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+.fb-product-card-info p { margin: 3px 0; }
+.fb-product-card-info .fb-button {
+  margin-top: 8px;
+  padding: 8px 12px;
+}
+
+/* Selected card highlight (button is disabled + primary) */
+.fb-product-card:has(.fb-button-primary:disabled) {
+  border-color: var(--fb-blue, #1877f2);
+  box-shadow: 0 0 0 1px var(--fb-blue, #1877f2);
+}
+
+/* ---------- 3. Product preview (posts.js) ---------- */
+.fb-product-preview { display: grid; gap: 16px; }
+
+.fb-product-preview-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 340px;
+  object-fit: cover;
+  border-radius: 12px;
+  background: var(--fb-soft, #f3f4f6);
+}
+
+.fb-product-preview-info h3 {
+  margin: 6px 0;
+  font-size: 1.2rem;
+  overflow-wrap: anywhere;
+}
+.fb-product-preview-info h4 {
+  margin: 18px 0 8px;
+  font-size: .95rem;
+}
+.fb-product-preview-info p { margin: 6px 0; }
+
+/* ---------- 4. Variants ---------- */
+.fb-product-variants { display: grid; gap: 8px; }
+
+.fb-product-variant {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--fb-border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--fb-soft, #f3f4f6);
+}
+.fb-product-variant > div { min-width: 0; }
+.fb-product-variant p {
+  margin: 2px 0 0;
+  font-size: .82rem;
+}
+.fb-product-variant > strong {
+  white-space: nowrap;
+}
+
+/* ---------- 5. Facebook-style post preview ---------- */
+.fb-preview {
+  border: 1px solid var(--fb-border, #e5e7eb);
+  border-radius: 12px;
+  overflow: hidden;
+  padding: 14px;
+  margin-top: 12px;
+  background: var(--fb-surface, #fff);
+}
+
+.fb-preview-brand {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+}
+.fb-preview-brand > div { display: grid; gap: 2px; }
+.fb-preview-brand small { color: var(--fb-muted, #6b7280); }
+
+.fb-avatar {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--fb-blue, #1877f2);
+  color: #fff;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.fb-preview > p {
+  min-height: 80px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  margin: 12px 0;
+}
+
+.fb-preview-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  gap: 12px;
+  border-top: 1px solid var(--fb-border, #e5e7eb);
+  padding-top: 12px;
+  color: var(--fb-muted, #6b7280);
+  font-size: .85rem;
+}
+
+/* ---------- 6. Responsive ---------- */
+@media (max-width: 1000px) {
+  .fb-posts-layout { grid-template-columns: 1fr; }
+  .fb-post-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px) {
+  .fb-product-card {
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .fb-product-card-image {
+    width: 72px !important;
+    height: 72px !important;
+  }
+  .fb-products-list { max-height: none; }
+}

@@ -6,12 +6,27 @@ import {
   bindFacebookSettingsEvents
 } from './settings.js';
 
+import {
+  renderFacebookPosts,
+  bindFacebookPostsEvents
+} from './posts.js';
+
 // ========================================
 // Render Facebook Page
 // ========================================
 
 export function renderFacebookPage() {
-  return renderFacebookSettings();
+  return `
+    <div class="fb-page-layout">
+
+      ${renderFacebookSettings()}
+
+      <section class="fb-posts-section">
+        ${renderFacebookPosts()}
+      </section>
+
+    </div>
+  `;
 }
 
 // ========================================
@@ -29,5 +44,9 @@ export function bindFacebookPageEvents(context) {
     return;
   }
 
+  // Facebook account and Page settings
   bindFacebookSettingsEvents(root);
+
+  // Product selection and preview
+  bindFacebookPostsEvents(root);
 }
