@@ -326,9 +326,9 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/cloudinary', cloudinaryRoutes);
-app.use('/api/facebook', facebookRoutes);
-app.use('/api/facebook/posts', facebookPostRoutes);
 
+app.use('/api/facebook/posts', facebookPostRoutes);
+app.use('/api/facebook', facebookRoutes);
 // ========================================
 // API Not Found
 // ========================================
