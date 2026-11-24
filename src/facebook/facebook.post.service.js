@@ -106,6 +106,83 @@ function normalizeVariants(variants) {
 }
 
 // ========================================
+// Image Matching
+// ========================================
+
+function normalizeColor(value) {
+  return cleanString(value, 100).toLowerCase();
+}
+
+function getMainImage(images) {
+  if (!images.length) {
+    return null;
+  }
+
+  return images.find(image => image.isMain) || images[0];
+}
+
+function getVariantImages(images, color) {
+  const normalizedColor = normalizeColor(color);
+
+  if (!normalizedColor) {
+    return [];
+  }
+
+  return images.filter(image => (
+    normalizeColor(image.color) === normalizedColor
+  ));
+}
+
+function attachVariantImages(variants, images, mainImage) {
+  return variants.map(variant => {
+    const matchingImages = getVariantImages(
+      images,
+      variant.color
+    );
+
+    return {
+      ...variant,
+
+      // Preview image for this variant.
+      // Use main image when no color image exists.
+      imageUrl: matchingImages[0]?.url || mainImage?.url || null,
+
+      // All images matching this variant's color.
+      images: matchingImages
+    };
+  });
+}
+
+function buildPostImages(images, variants, mainImage) {
+  if (!mainImage) {
+    return [];
+  }
+
+  const selectedImages = [mainImage];
+
+  for (const variant of variants) {
+    const matchingImages = getVariantImages(
+      images,
+      variant.color
+    );
+
+    selectedImages.push(...matchingImages);
+  }
+
+  // Remove duplicate URLs while preserving order.
+  const seen = new Set();
+
+  return selectedImages.filter(image => {
+    if (!image?.url || seen.has(image.url)) {
+      return false;
+    }
+
+    seen.add(image.url);
+    return true;
+  });
+}
+
+// ========================================
 // Product Eligibility
 // ========================================
 
@@ -143,14 +220,29 @@ async function listEligibleProducts(options = {}) {
     }
 
     const images = normalizeImages(product.images);
-    const variants = normalizeVariants(product.variants);
+    const rawVariants = normalizeVariants(product.variants);
 
-    // A product must have at least one
-    // valid Cloudinary image and one
-    // available active variant.
-    if (!images.length || !variants.length) {
+    if (!images.length || !rawVariants.length) {
       continue;
     }
+
+    const mainImage = getMainImage(images);
+
+    if (!mainImage) {
+      continue;
+    }
+
+    const variants = attachVariantImages(
+      rawVariants,
+      images,
+      mainImage
+    );
+
+    const postImages = buildPostImages(
+      images,
+      rawVariants,
+      mainImage
+    );
 
     products.push({
       id: doc.id,
@@ -171,6 +263,8 @@ async function listEligibleProducts(options = {}) {
       ),
 
       images,
+      mainImage,
+      postImages,
       variants,
 
       summary: {
