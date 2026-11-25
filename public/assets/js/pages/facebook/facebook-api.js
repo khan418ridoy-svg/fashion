@@ -241,6 +241,32 @@ export const facebookApi = {
     return request(`/posts/history${suffix}`);
   },
 
+    /**
+   * Delete a Facebook post and its Firestore history.
+   *
+   * Published posts:
+   * Deletes Facebook post first, then Firestore history.
+   *
+   * Failed posts:
+   * Deletes Firestore history only.
+   */
+  async deletePostHistory(historyId) {
+    if (
+      typeof historyId !== 'string' ||
+      !historyId.trim()
+    ) {
+      throw new Error(
+        'A valid post history ID is required.'
+      );
+    }
+
+    return request(
+      `/posts/history/${encodeURIComponent(historyId.trim())}`,
+      {
+        method: 'DELETE'
+      }
+    );
+  },
   /**
    * Generate Facebook caption for a product.
    */
