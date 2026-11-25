@@ -10,6 +10,13 @@ const HISTORY_COLLECTION = 'facebookPostHistory';
 const COMMENTS_COLLECTION = 'facebookComments';
 const EVENTS_COLLECTION = 'facebookWebhookEvents';
 
+const MAX_HISTORY_LIMIT = 5000;
+const DEFAULT_LIST_LIMIT = 100;
+
+// ========================================
+// Helpers
+// ========================================
+
 function cleanString(value, maxLength = 2000) {
   if (typeof value !== 'string') {
     return '';
@@ -21,6 +28,10 @@ function cleanString(value, maxLength = 2000) {
 function toDate(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value;
+  }
+
+  if (value && typeof value.toDate === 'function') {
+    return toDate(value.toDate());
   }
 
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -55,9 +66,26 @@ function makeDocumentId(value) {
     .digest('hex');
 }
 
-/**
- * Find the selected Page and its owner.
- */
+function getTimestamp(value) {
+  const date = toDate(value);
+
+  return date ? date.getTime() : 0;
+}
+
+function normalizeLimit(value) {
+  const limit = Number(value);
+
+  if (!Number.isInteger(limit) || limit < 1) {
+    return DEFAULT_LIST_LIMIT;
+  }
+
+  return Math.min(limit, 500);
+}
+
+// ========================================
+// Facebook Page Context
+// ========================================
+
 async function getPageContext(pageId) {
   const id = cleanString(pageId, 50);
 
@@ -90,9 +118,10 @@ async function getPageContext(pageId) {
   };
 }
 
-/**
- * Find the published product post associated with a comment.
- */
+// ========================================
+// Published Post History Lookup
+// ========================================
+
 async function findPostHistory(adminUid, pageId, postId) {
   if (!postId) {
     return null;
@@ -129,18 +158,10 @@ async function findPostHistory(adminUid, pageId, postId) {
   };
 }
 
-/**
- * Process a Facebook Page feed comment event.
- *
- * Supported examples:
- * - item: comment, verb: add
- * - item: comment, verb: edit
- * - item: comment, verb: remove
- *
- * Page replies are comments authored by the Page itself.
- * AI/Admin source labels can be preserved when those systems
- * later write their own reply records.
- */
+// ========================================
+// Process Facebook Feed Comment Event
+// ========================================
+
 async function processFeedChange(pageId, change) {
   const id = cleanString(pageId, 50);
   const value = change?.value || {};
@@ -246,15 +267,19 @@ async function processFeedChange(pageId, change) {
     }
 
     const commentSnapshot = await transaction.get(commentRef);
+
     const previous = commentSnapshot.exists
       ? commentSnapshot.data() || {}
       : {};
 
-    // Preserve an internally recorded AI/Admin source.
-    // Otherwise, a reply authored by the Page is labeled Page.
+    // Preserve an existing AI/Admin reply source.
     let replySource = previous.replySource || null;
 
-    if (isReply && isPageAuthor && !['ai', 'admin'].includes(replySource)) {
+    if (
+      isReply &&
+      isPageAuthor &&
+      !['ai', 'admin'].includes(replySource)
+    ) {
       replySource = 'page';
     }
 
@@ -280,8 +305,8 @@ async function processFeedChange(pageId, change) {
         ? previous.message || cleanString(value.message, 10000)
         : cleanString(value.message, 10000),
 
-      authorId,
-      authorName,
+      authorId: authorId || previous.authorId || '',
+      authorName: authorName || previous.authorName || '',
       authorType: isPageAuthor ? 'page' : 'customer',
 
       replySource,
@@ -330,10 +355,251 @@ async function processFeedChange(pageId, change) {
     postId,
     pageId: page.pageId,
     isReply,
-    replySource: isReply ? (isPageAuthor ? 'page' : null) : null
+    replySource: isReply && isPageAuthor
+      ? 'page'
+      : null
   };
 }
 
+// ========================================
+// Record Outgoing AI / Admin Reply
+// ========================================
+
+/**
+ * Call this function ONLY after Facebook successfully
+ * creates the reply and returns its comment ID.
+ *
+ * source:
+ * - ai
+ * - admin
+ */
+async function recordOutgoingReply(options = {}) {
+  const adminUid = cleanString(options.adminUid, 128);
+  const pageId = cleanString(options.pageId, 50);
+  const postId = cleanString(options.postId, 200);
+  const parentCommentId = cleanString(
+    options.parentCommentId || options.commentId,
+    200
+  );
+
+  const replyId = cleanString(options.replyId, 200);
+  const message = cleanString(options.message, 10000);
+  const source = cleanString(options.source, 20).toLowerCase();
+
+  if (!adminUid || !pageId || !postId || !parentCommentId) {
+    throw new Error('Reply owner, Page, post and parent comment are required.');
+  }
+
+  if (!replyId || !message) {
+    throw new Error('Facebook reply ID and message are required.');
+  }
+
+  if (!['ai', 'admin'].includes(source)) {
+    throw new Error('Reply source must be ai or admin.');
+  }
+
+  const page = await getPageContext(pageId);
+
+  if (!page || page.adminUid !== adminUid) {
+    throw new Error('Facebook Page access denied.');
+  }
+
+  const parentRef = db
+    .collection(COMMENTS_COLLECTION)
+    .doc(makeDocumentId(`${pageId}:${parentCommentId}`));
+
+  const replyRef = db
+    .collection(COMMENTS_COLLECTION)
+    .doc(makeDocumentId(`${pageId}:${replyId}`));
+
+  const now = new Date();
+  const replyCreatedAt = toDate(options.createdAt) || now;
+
+  const result = await db.runTransaction(async transaction => {
+    const parentSnapshot = await transaction.get(parentRef);
+    const replySnapshot = await transaction.get(replyRef);
+
+    if (!parentSnapshot.exists) {
+      throw new Error('Parent customer comment was not found.');
+    }
+
+    const parent = parentSnapshot.data() || {};
+
+    if (
+      parent.adminUid !== adminUid ||
+      parent.pageId !== pageId ||
+      parent.postId !== postId ||
+      parent.isReply === true
+    ) {
+      throw new Error('Parent comment does not belong to this Page or post.');
+    }
+
+    if (replySnapshot.exists) {
+      const existing = replySnapshot.data() || {};
+
+      if (
+        existing.adminUid !== adminUid ||
+        existing.parentId !== parentCommentId
+      ) {
+        throw new Error('Reply ID is already associated with another record.');
+      }
+
+      return {
+        duplicate: true
+      };
+    }
+
+    // Store the actual Facebook reply as its own comment record.
+    transaction.create(replyRef, {
+      adminUid,
+      pageId,
+      pageName: page.pageName,
+
+      postId,
+
+      historyId: parent.historyId || '',
+      productId: parent.productId || '',
+      productName: parent.productName || '',
+      productSku: parent.productSku || '',
+      postUrl: parent.postUrl || '',
+
+      commentId: replyId,
+      parentId: parentCommentId,
+      isReply: true,
+
+      message,
+
+      authorId: pageId,
+      authorName: page.pageName,
+      authorType: 'page',
+
+      replySource: source,
+
+      status: 'active',
+
+      commentCreatedAt: replyCreatedAt,
+      lastEventAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+
+    // Keep latest reply information on the parent comment.
+    transaction.set(parentRef, {
+      replied: true,
+      latestReplyId: replyId,
+      latestReplyMessage: message,
+      latestReplySource: source,
+      latestReplyAt: replyCreatedAt,
+      updatedAt: now
+    }, { merge: true });
+
+    return {
+      duplicate: false
+    };
+  });
+
+  return {
+    success: true,
+    duplicate: result.duplicate,
+    replyId,
+    parentCommentId,
+    replySource: source
+  };
+}
+
+// ========================================
+// List Comment History
+// ========================================
+
+/**
+ * Filters:
+ * - pageId
+ * - postId
+ * - status: active | deleted
+ * - includeReplies: true | false
+ * - limit
+ *
+ * Results are always restricted to adminUid.
+ */
+async function listComments(adminUid, filters = {}) {
+  const ownerUid = cleanString(adminUid, 128);
+
+  if (!ownerUid) {
+    throw new Error('Admin UID is required.');
+  }
+
+  const pageId = cleanString(filters.pageId, 50);
+  const postId = cleanString(filters.postId, 200);
+  const status = cleanString(filters.status, 20).toLowerCase();
+
+  if (pageId && !/^\d{5,30}$/.test(pageId)) {
+    throw new Error('Invalid Facebook Page ID.');
+  }
+
+  if (status && !['active', 'deleted'].includes(status)) {
+    throw new Error('Invalid comment status.');
+  }
+
+  const limit = normalizeLimit(filters.limit);
+
+  // Query by owner first. Apply optional filters in memory
+  // to avoid requiring a separate composite index per filter.
+  const snapshot = await db
+    .collection(COMMENTS_COLLECTION)
+    .where('adminUid', '==', ownerUid)
+    .limit(MAX_HISTORY_LIMIT)
+    .get();
+
+  let comments = snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  }));
+
+  if (pageId) {
+    comments = comments.filter(
+      item => item.pageId === pageId
+    );
+  }
+
+  if (postId) {
+    comments = comments.filter(
+      item => item.postId === postId
+    );
+  }
+
+  if (status) {
+    comments = comments.filter(
+      item => item.status === status
+    );
+  }
+
+  if (typeof filters.includeReplies === 'boolean') {
+    comments = comments.filter(
+      item => item.isReply === filters.includeReplies
+    );
+  }
+
+  comments.sort((a, b) => {
+    return getTimestamp(b.lastEventAt || b.commentCreatedAt) -
+      getTimestamp(a.lastEventAt || a.commentCreatedAt);
+  });
+
+  const total = comments.length;
+
+  return {
+    comments: comments.slice(0, limit),
+    total,
+    limit,
+    hasMore: total > limit
+  };
+}
+
+// ========================================
+// Exports
+// ========================================
+
 module.exports = {
-  processFeedChange
+  processFeedChange,
+  recordOutgoingReply,
+  listComments
 };
