@@ -9,7 +9,7 @@ const {
   cleanString,
   FacebookError,
   requireEnv
-} = require('../facebook/facebook.utils')
+} = require('./facebook.utils');
 
 const {
   getGraphVersion,
