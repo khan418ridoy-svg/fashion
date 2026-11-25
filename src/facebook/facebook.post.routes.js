@@ -31,7 +31,8 @@ const {
 const {
   createPostHistory,
   markPostPublished,
-  markPostFailed
+  markPostFailed,
+  listPostHistory
 } = require('./facebook.post.history.service');
 
 const router = express.Router();
@@ -53,6 +54,44 @@ function asyncHandler(handler) {
 // ========================================
 
 router.use(adminAuth);
+
+// ========================================
+// GET Post History
+// GET /api/facebook/posts/history
+// ========================================
+
+router.get(
+  '/history',
+  asyncHandler(async (req, res) => {
+    const adminUid = req.admin?.uid;
+
+    if (!adminUid) {
+      throw new FacebookError(
+        'Admin authentication required.',
+        401,
+        'ADMIN_AUTH_REQUIRED'
+      );
+    }
+
+    const result = await listPostHistory(
+      adminUid,
+      {
+        status: req.query.status,
+        pageId: req.query.pageId,
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+        limit: req.query.limit
+      }
+    );
+
+    return res.json({
+      success: true,
+      count: result.count,
+      hasMore: result.hasMore,
+      posts: result.posts
+    });
+  })
+);
 
 // ========================================
 // GET Eligible Products
@@ -102,8 +141,6 @@ router.post(
       );
     }
 
-    // 1. Validate Product ID.
-
     const productId = cleanString(
       req.body?.productId,
       128
@@ -117,13 +154,9 @@ router.post(
       );
     }
 
-    // 2. Load eligible product from Firestore.
-
     const product = await getEligibleProductById(
       productId
     );
-
-    // 3. Get verified SKU data.
 
     const captionSkuData = product.captionSkuData || {
       productSku: cleanString(product.sku, 100),
@@ -138,9 +171,7 @@ router.post(
         ))
         .map(variant => ({
           color: cleanString(variant.color, 100),
-
           size: cleanString(variant.size, 100),
-
           sku: cleanString(
             variant.sku || variant.variantSku,
             100
@@ -148,14 +179,10 @@ router.post(
         }))
     };
 
-    // 4. Generate Gemini caption.
-
     const result = await generateFacebookCaption(
       productId,
       captionSkuData
     );
-
-    // 5. Return generated caption.
 
     return res.json({
       ...result,
@@ -185,9 +212,7 @@ router.post(
       );
     }
 
-    // ====================================
     // 1. Validate Request
-    // ====================================
 
     const productId = cleanString(
       req.body?.productId,
@@ -227,9 +252,7 @@ router.post(
       );
     }
 
-    // ====================================
     // 2. Verify Product
-    // ====================================
 
     const product = await getEligibleProductById(
       productId
@@ -246,9 +269,7 @@ router.post(
       );
     }
 
-    // ====================================
     // 3. Verify Selected Facebook Page
-    // ====================================
 
     const selectedPages = await getSelectedPages(
       adminUid
@@ -266,18 +287,14 @@ router.post(
       );
     }
 
-    // ====================================
     // 4. Get Page Access Token
-    // ====================================
 
     const pageAccessToken = await getSelectedPageToken(
       adminUid,
       pageId
     );
 
-    // ====================================
     // 5. Create Publishing History
-    // ====================================
 
     const history = await createPostHistory({
       adminUid,
@@ -297,26 +314,19 @@ router.post(
       images: product.postImages
     });
 
-    // ====================================
     // 6. Publish to Facebook
-    // ====================================
 
     let publishResult;
 
     try {
       publishResult = await publishFacebookProductPost({
         pageId,
-
         pageAccessToken,
-
         caption,
-
         images: product.postImages
       });
 
     } catch (error) {
-      // Save publishing failure.
-
       try {
         await markPostFailed(
           history.id,
@@ -334,9 +344,7 @@ router.post(
       throw error;
     }
 
-    // ====================================
     // 7. Save Successful Publishing Result
-    // ====================================
 
     const historyResult = await markPostPublished(
       history.id,
@@ -344,14 +352,21 @@ router.post(
       publishResult
     );
 
-    // ====================================
     // 8. Return Success
-    // ====================================
+    // Root-level fields maintain frontend compatibility.
 
     return res.status(200).json({
       success: true,
 
       message: 'Facebook product post published successfully.',
+
+      postId: publishResult.postId,
+
+      pageId: publishResult.pageId || pageId,
+
+      imageCount: publishResult.imageCount,
+
+      postUrl: historyResult.postUrl,
 
       post: {
         postId: publishResult.postId,
