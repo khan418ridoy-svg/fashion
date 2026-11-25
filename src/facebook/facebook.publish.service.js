@@ -1,4 +1,3 @@
-
 'use strict';
 
 const {
@@ -161,6 +160,64 @@ function normalizeAccessToken(value) {
 }
 
 // ========================================
+// Delete Facebook Published Post
+// ========================================
+
+/**
+ * Delete a published Facebook Page post.
+ *
+ * Important:
+ * - Only the backend calls this method.
+ * - The Page access token must never reach the frontend.
+ * - The caller must verify post ownership before calling.
+ */
+async function deleteFacebookPublishedPost({
+  postId,
+  pageAccessToken
+} = {}) {
+  const normalizedPostId = cleanString(
+    postId,
+    200
+  );
+
+  if (
+    !normalizedPostId ||
+    !/^\d{5,30}_\d{5,40}$/.test(normalizedPostId)
+  ) {
+    throw new FacebookError(
+      'Invalid Facebook post ID.',
+      400,
+      'INVALID_FACEBOOK_POST_ID'
+    );
+  }
+
+  const normalizedToken = normalizeAccessToken(
+    pageAccessToken
+  );
+
+  const result = await authenticatedGraphRequest(
+    normalizedPostId,
+    normalizedToken,
+    {
+      method: 'DELETE'
+    }
+  );
+
+  if (result?.success !== true) {
+    throw new FacebookError(
+      'Facebook did not confirm post deletion.',
+      502,
+      'FACEBOOK_POST_DELETE_FAILED'
+    );
+  }
+
+  return {
+    success: true,
+    postId: normalizedPostId
+  };
+}
+
+// ========================================
 // Upload unpublished photo
 // ========================================
 
@@ -272,7 +329,7 @@ async function publishFacebookProductPost({
     photoIds.push(photoId);
   }
 
-  // Step 2: Publish one feed post containing all uploaded images.
+  // Step 2: Publish one feed post containing all uploaded photos.
   const result = await publishFeedPost({
     pageId: normalizedPageId,
     pageAccessToken: normalizedToken,
@@ -299,6 +356,11 @@ async function publishFacebookProductPost({
   };
 }
 
+// ========================================
+// Exports
+// ========================================
+
 module.exports = {
-  publishFacebookProductPost
+  publishFacebookProductPost,
+  deleteFacebookPublishedPost
 };
