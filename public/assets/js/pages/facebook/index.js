@@ -21,6 +21,11 @@ import {
   bindFacebookHistoryEvents
 } from './history.js';
 
+import {
+  renderFacebookComments,
+  bindFacebookCommentsEvents
+} from './comments.js';
+
 // ========================================
 // Facebook Navigation
 // ========================================
@@ -41,6 +46,10 @@ const FACEBOOK_SECTIONS = [
   {
     id: 'history',
     label: 'Post History'
+  },
+  {
+    id: 'comments',
+    label: 'Comments & Replies'
   }
 ];
 
@@ -176,6 +185,44 @@ export function renderFacebookPage() {
 
       </section>
 
+      <!-- Facebook Comments & Replies -->
+
+      <section
+        id="fb-section-comments"
+        class="fb-page-section fb-comments-section"
+        data-fb-section="comments"
+        hidden
+      >
+
+        <header class="fb-section-header">
+
+          <div>
+            <span class="fb-eyebrow">
+              FACEBOOK ENGAGEMENT
+            </span>
+
+            <h2>Comments & Replies</h2>
+
+            <p>
+              View customer comments, related products,
+              reply history and reply sources.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            class="fb-button"
+            data-fb-back-dashboard
+          >
+            Back to Dashboard
+          </button>
+
+        </header>
+
+        ${renderFacebookComments()}
+
+      </section>
+
     </div>
   `;
 }
@@ -270,10 +317,7 @@ function bindFacebookNavigation(root) {
   });
 
   // Dashboard quick actions:
-  // Create Product Post / Facebook Settings.
-  //
-  // Capture phase ensures section is shown before
-  // dashboard.js tries to scroll to it.
+  // Product Posts / Facebook Settings / Post History / Comments.
 
   if (!root.dataset.fbDashboardNavigationBound) {
     root.dataset.fbDashboardNavigationBound = 'true';
@@ -287,12 +331,12 @@ function bindFacebookNavigation(root) {
 
       const target = button.dataset.fbDashboardScroll;
 
-      if (target === 'posts') {
-        setActiveFacebookSection(root, 'posts');
-      } else if (target === 'settings') {
-        setActiveFacebookSection(root, 'settings');
-      } else if (target === 'history') {
-        setActiveFacebookSection(root, 'history');
+      if (
+        FACEBOOK_SECTIONS.some(
+          section => section.id === target
+        )
+      ) {
+        setActiveFacebookSection(root, target);
       }
     }, true);
   }
@@ -344,6 +388,52 @@ function bindFacebookNavigation(root) {
       });
     }
   }
+
+  // Management Tools > Comment Management card.
+
+  const commentsCard = Array.from(
+    root.querySelectorAll('.fb-dashboard-feature')
+  ).find(card => {
+    const heading = card.querySelector('h4');
+
+    return heading &&
+      heading.textContent.trim() === 'Comment Management';
+  });
+
+  if (commentsCard) {
+    commentsCard.classList.add(
+      'fb-dashboard-feature-clickable'
+    );
+
+    commentsCard.setAttribute('role', 'button');
+    commentsCard.setAttribute('tabindex', '0');
+
+    commentsCard.setAttribute(
+      'aria-label',
+      'Open Facebook Comments'
+    );
+
+    if (!commentsCard.dataset.bound) {
+      commentsCard.dataset.bound = 'true';
+
+      commentsCard.addEventListener('click', () => {
+        setActiveFacebookSection(root, 'comments');
+      });
+
+      commentsCard.addEventListener('keydown', event => {
+        if (
+          event.key !== 'Enter' &&
+          event.key !== ' '
+        ) {
+          return;
+        }
+
+        event.preventDefault();
+
+        setActiveFacebookSection(root, 'comments');
+      });
+    }
+  }
 }
 
 // ========================================
@@ -381,6 +471,10 @@ export function bindFacebookPageEvents(context) {
   // Published Posts History.
 
   bindFacebookHistoryEvents(root);
+
+  // Facebook Customer Comments and Replies.
+
+  bindFacebookCommentsEvents(root);
 
   // Initial section.
 
