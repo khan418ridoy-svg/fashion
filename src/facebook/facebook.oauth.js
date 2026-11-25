@@ -32,22 +32,31 @@ function getOAuthConfig() {
 
 /**
  * Get requested Facebook permissions.
- *
- * Keep permissions configurable because Meta may require
- * App Review or business verification for certain permissions.
  */
 function getOAuthScopes() {
+  const defaultScopes = [
+    'public_profile',
+
+    // Page access
+    'pages_show_list',
+    'pages_read_engagement',
+    'pages_read_user_content',
+
+    // Page publishing and engagement
+    'pages_manage_posts',
+    'pages_manage_engagement',
+    'pages_manage_metadata',
+
+    // Page analytics
+    'read_insights',
+
+    // Messenger
+    'pages_messaging'
+  ];
+
   const configured = cleanString(
     process.env.FACEBOOK_OAUTH_SCOPES ||
-      [
-        'public_profile',
-        'pages_show_list',
-        'pages_read_engagement',
-        'pages_manage_posts',
-        'pages_messaging',
-        'pages_manage_metadata',
-        'pages_read_user_content'
-      ].join(','),
+      defaultScopes.join(','),
     2000
   );
 
@@ -61,9 +70,6 @@ function getOAuthScopes() {
 
 /**
  * Hash OAuth state before storing it.
- *
- * Raw state is only returned to the browser through the
- * Facebook authorization URL.
  */
 function hashState(state) {
   return crypto
@@ -73,9 +79,7 @@ function hashState(state) {
 }
 
 /**
- * Create a Facebook OAuth authorization URL.
- *
- * adminUid must come from authenticated admin middleware.
+ * Create Facebook OAuth authorization URL.
  */
 async function createAuthorizationUrl(adminUid) {
   const uid = cleanString(adminUid, 128);
@@ -114,6 +118,7 @@ async function createAuthorizationUrl(adminUid) {
   authorizationUrl.searchParams.set('redirect_uri', config.redirectUri);
   authorizationUrl.searchParams.set('response_type', 'code');
   authorizationUrl.searchParams.set('state', state);
+
   authorizationUrl.searchParams.set(
     'scope',
     getOAuthScopes().join(',')
@@ -127,9 +132,6 @@ async function createAuthorizationUrl(adminUid) {
 
 /**
  * Validate and consume OAuth state.
- *
- * A state can only be used once.
- * Returns the admin UID associated with the login attempt.
  */
 async function consumeOAuthState(rawState) {
   const state = cleanString(rawState, 200);
@@ -157,7 +159,6 @@ async function consumeOAuthState(rawState) {
 
     const data = snapshot.data() || {};
 
-    // Delete state in the same transaction so it cannot be reused.
     transaction.delete(stateRef);
 
     const expiresAt = data.expiresAt instanceof Date
@@ -217,7 +218,7 @@ function normalizeTokenResponse(data) {
 }
 
 /**
- * Exchange Facebook authorization code for short-lived token.
+ * Exchange authorization code for short-lived token.
  */
 async function exchangeAuthorizationCode(code) {
   const authorizationCode = cleanString(code, 5000);
@@ -247,8 +248,6 @@ async function exchangeAuthorizationCode(code) {
 
 /**
  * Exchange short-lived User Access Token for long-lived token.
- *
- * This operation must only run on the backend.
  */
 async function exchangeForLongLivedToken(shortLivedToken) {
   const token = cleanString(shortLivedToken, 10000);
