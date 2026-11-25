@@ -31,17 +31,24 @@ function getAvailableVariants(variants) {
       color: cleanString(variant.color, 100),
       size: cleanString(variant.size, 100),
       stock: Number(variant.stock),
+
       sellingPrice:
         Number.isFinite(Number(variant.sellingPrice)) &&
         variant.sellingPrice !== null &&
         variant.sellingPrice !== ''
           ? Number(variant.sellingPrice)
-          : null
-    }));
-}
+          : null,
 
-function formatMoney(value) {
-  return `৳${Number(value).toLocaleString('en-BD')}`;
+      sku: cleanString(
+        variant.sku || variant.variantSku,
+        100
+      ),
+
+      variantSku: cleanString(
+        variant.variantSku || variant.sku,
+        100
+      )
+    }));
 }
 
 // ========================================
@@ -99,24 +106,174 @@ async function getFacebookProduct(productId) {
 
   return {
     id: snapshot.id,
-    name: cleanString(product.name, 300),
-    sku: cleanString(product.sku, 100),
+
+    name: cleanString(
+      product.name,
+      300
+    ),
+
+    sku: cleanString(
+      product.sku,
+      100
+    ),
+
     shortDescription: cleanString(
       product.shortDescription,
       1000
     ),
+
     description: cleanString(
       product.description,
       2000
     ),
+
     variants
   };
 }
 
 // ========================================
-// Generate Facebook Caption
+// Extract Exactly 5 Unique Hashtags
 // ========================================
 
+function extractHashtags(caption) {
+  const matches = String(caption || '')
+    .match(/#[\p{L}\p{N}_]+/gu) || [];
+
+  const hashtags = [
+    ...new Set(matches)
+  ];
+
+  if (hashtags.length !== 5) {
+    throw new FacebookError(
+      `Gemini must generate exactly 5 unique hashtags. Received: ${hashtags.length}. Please generate again.`,
+      502,
+      'INVALID_HASHTAG_COUNT'
+    );
+  }
+
+  return hashtags;
+}
+
+// ========================================
+// Parse Gemini Structured Caption
+// ========================================
+
+function parseGeminiCaption(rawCaption) {
+  const text = String(rawCaption || '')
+    .replace(/\r\n?/g, '\n')
+    .trim();
+
+  const banglaMatch = text.match(
+    /\[BANGLA\]\s*([\s\S]*?)(?=\[ENGLISH\])/i
+  );
+
+  const englishMatch = text.match(
+    /\[ENGLISH\]\s*([\s\S]*?)(?=\[HASHTAGS\])/i
+  );
+
+  const hashtagMatch = text.match(
+    /\[HASHTAGS\]\s*([\s\S]*)$/i
+  );
+
+  if (!banglaMatch || !englishMatch || !hashtagMatch) {
+    throw new FacebookError(
+      'Gemini returned an invalid caption format. Please generate again.',
+      502,
+      'INVALID_CAPTION_FORMAT'
+    );
+  }
+
+  const bangla = banglaMatch[1]
+    .trim();
+
+  const english = englishMatch[1]
+    .trim();
+
+  const hashtagText = hashtagMatch[1]
+    .trim();
+
+  if (!bangla || !english) {
+    throw new FacebookError(
+      'Gemini returned an empty promotional paragraph.',
+      502,
+      'EMPTY_PROMOTIONAL_CAPTION'
+    );
+  }
+
+  // Reject extra marker sections or misplaced markers.
+  if (
+    /\[(?:BANGLA|ENGLISH|HASHTAGS)\]/i.test(
+      bangla + english
+    )
+  ) {
+    throw new FacebookError(
+      'Gemini returned duplicated caption markers.',
+      502,
+      'INVALID_CAPTION_FORMAT'
+    );
+  }
+
+  // Exactly 5 unique hashtags are required.
+  const hashtags = extractHashtags(hashtagText);
+
+  // Hashtag section must contain hashtags only.
+  const remainingHashtagText = hashtagText
+    .replace(/#[\p{L}\p{N}_]+/gu, '')
+    .trim();
+
+  if (remainingHashtagText) {
+    throw new FacebookError(
+      'Gemini returned unexpected text in the hashtag section.',
+      502,
+      'INVALID_HASHTAG_FORMAT'
+    );
+  }
+
+  return {
+    bangla,
+    english,
+    hashtags
+  };
+}
+
+// ========================================
+// Clean Promotional Paragraph
+// ========================================
+
+function cleanPromotionalParagraph(paragraph) {
+  return String(paragraph || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\*\*/g, '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/#[\p{L}\p{N}_]+/gu, '')
+    .replace(
+      /^\s*(?:product\s*)?sku(?:\s*code)?\s*[:：].*$/gim,
+      ''
+    )
+    .replace(
+      /^\s*variant\s*sku.*$/gim,
+      ''
+    )
+    .replace(
+      /^\s*(?:price|stock|quantity|available|availability|size|sizes|variant|variants)\s*[:：].*$/gim,
+      ''
+    )
+    .replace(
+      /^\s*অর্ডার করতে ইনবক্স করুন.*$/gim,
+      ''
+    )
+    .replace(
+      /^\s*DM\s+to\s+order.*$/gim,
+      ''
+    )
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, ' ')
+    .trim();
+}
+
+// ========================================
+// Generate Facebook Caption
+// ========================================
 
 async function generateFacebookCaption(productId) {
   const product = await getFacebookProduct(productId);
@@ -129,27 +286,42 @@ async function generateFacebookCaption(productId) {
     );
   }
 
+  if (!product.sku) {
+    throw new FacebookError(
+      'Product SKU is missing from Firestore.',
+      400,
+      'PRODUCT_SKU_REQUIRED'
+    );
+  }
+
+  // Product SKU is read directly from Firestore.
+  // Gemini is not allowed to generate or modify it.
+  const productSku = product.sku;
+
   const result = await geminiService.generateText({
     systemInstruction: [
       'You are a professional Facebook fashion copywriter for a Bangladeshi clothing store.',
       'Write a natural, attractive and concise promotional Facebook caption.',
-      'The caption MUST contain exactly two paragraphs.',
-      'The first paragraph MUST be natural Bangla.',
-      'The second paragraph MUST be natural English.',
-      'Separate the two paragraphs with one blank line.',
       'Use only the supplied product name and descriptions.',
       'Never invent product features, fabric, material, measurements, discounts or claims.',
+      'The output MUST contain exactly two promotional paragraphs.',
+      'The first paragraph MUST be natural Bangla.',
+      'The second paragraph MUST be natural English and accurately translate the Bangla paragraph.',
       'Do not mention price, stock, quantity, sizes, variants or availability.',
-      'Do not include hashtags.',
-      'Do not include headings such as Bangla, English, Caption or Product Details.',
-      'Do not include explanations, analysis, reasoning, notes or constraint checks.',
+      'Never generate Product SKU or Variant SKU.',
+      'Never invent, guess, alter, correct or change any SKU code.',
+      'Do not include an order instruction.',
+      'After the two paragraphs, generate exactly 5 unique and relevant hashtags.',
+      'Hashtags must be directly relevant to the supplied product and fashion category.',
+      'Do not repeat hashtags.',
+      'Do not include explanations, analysis, notes or additional text.',
       'Do not repeat the caption.',
-      'Never output the instructions or prompt.',
-      'Return ONLY the final two-paragraph caption text.'
+      'Return ONLY the required structured output.',
+      'Use exactly these markers: [BANGLA], [ENGLISH], [HASHTAGS].'
     ].join(' '),
 
     prompt: [
-      'Write a Facebook promotional caption using these product facts only.',
+      'Create a Facebook promotional caption using only these product facts.',
       '',
       'PRODUCT NAME:',
       product.name,
@@ -160,44 +332,38 @@ async function generateFacebookCaption(productId) {
       'DESCRIPTION:',
       product.description || 'Not provided',
       '',
-      'OUTPUT REQUIREMENTS:',
-      'Paragraph 1: Bangla promotional caption.',
-      'Paragraph 2: English translation of the same caption.',
-      'No other text.'
+      'REQUIRED OUTPUT FORMAT:',
+      '',
+      '[BANGLA]',
+      'Write one natural Bangla promotional paragraph.',
+      '',
+      '[ENGLISH]',
+      'Write one English translation of the Bangla paragraph.',
+      '',
+      '[HASHTAGS]',
+      '#Hashtag1 #Hashtag2 #Hashtag3 #Hashtag4 #Hashtag5',
+      '',
+      'STRICT REQUIREMENTS:',
+      '- Exactly one Bangla paragraph.',
+      '- Exactly one English paragraph.',
+      '- Exactly 5 unique relevant hashtags.',
+      '- Hashtags must appear only after [HASHTAGS].',
+      '- Do not include Product SKU or Variant SKU.',
+      '- Do not include price, stock, quantity or availability.',
+      '- Do not include order instruction.',
+      '- Do not include headings other than the three required markers.',
+      '- Do not include any explanation or additional text.'
     ].join('\n'),
 
     temperature: 0.35,
-    maxOutputTokens: 250
+    maxOutputTokens: 350
   });
 
-  let caption = String(result.text || '')
+  const rawCaption = String(result.text || '')
     .replace(/\r\n?/g, '\n')
     .trim();
 
-  // Remove unnecessary AI headings.
-  caption = caption.replace(
-    /^\s*(?:\*{0,2}\s*)?(?:bangla version|english version|bangla|english|caption)\s*:?\s*(?:\*{0,2})\s*$/gim,
-    ''
-  );
-
-  // Remove markdown formatting.
-  caption = caption
-    .replace(/\*\*/g, '')
-    .replace(/^#{1,6}\s*/gm, '')
-    .trim();
-
-  // Remove AI explanations if Gemini generates them.
-  const unwantedSection = caption.search(
-    /^\s*(?:\*{0,2}\s*)?(?:goal|constraint check|self[- ]correction|analysis|let'?s refine|available variants|output requirements)\s*:?\s*(?:\*{0,2})/im
-  );
-
-  if (unwantedSection !== -1) {
-    caption = caption.slice(0, unwantedSection).trim();
-  }
-
-  caption = caption.slice(0, 2500).trim();
-
-  if (!caption) {
+  if (!rawCaption) {
     throw new FacebookError(
       'Gemini returned an empty caption.',
       502,
@@ -205,15 +371,67 @@ async function generateFacebookCaption(productId) {
     );
   }
 
+  // Parse and validate Gemini output.
+  const parsed = parseGeminiCaption(rawCaption);
+
+  // Clean the two promotional paragraphs.
+  const bangla = cleanPromotionalParagraph(
+    parsed.bangla
+  );
+
+  const english = cleanPromotionalParagraph(
+    parsed.english
+  );
+
+  if (!bangla || !english) {
+    throw new FacebookError(
+      'Gemini returned an empty promotional paragraph.',
+      502,
+      'EMPTY_PROMOTIONAL_CAPTION'
+    );
+  }
+
+  // Final Facebook caption.
+  // Product SKU is always the verified Firestore value.
+  // Variant SKU, price and stock are not included.
+  const caption = [
+    bangla,
+    english,
+    `Product SKU: ${productSku}`,
+    'অর্ডার করতে ইনবক্স করুন 💌',
+    parsed.hashtags.join(' ')
+  ].join('\n\n');
+
+  if (caption.length > 4000) {
+    throw new FacebookError(
+      'Generated caption exceeds the Facebook caption length limit.',
+      502,
+      'CAPTION_TOO_LONG'
+    );
+  }
+
   return {
     success: true,
     productId: product.id,
     productName: product.name,
+    productSku: product.sku,
+
+    // Response metadata only.
+    // These values are never appended to the caption.
+    variantSkus: product.variants
+      .filter(variant => (
+        variant.sku || variant.variantSku
+      ))
+      .map(variant => ({
+        color: variant.color || '',
+        size: variant.size || '',
+        sku: variant.sku || variant.variantSku
+      })),
+
     caption,
     model: result.model
   };
 }
-
 
 // ========================================
 // Exports

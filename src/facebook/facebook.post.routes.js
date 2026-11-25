@@ -95,11 +95,62 @@ router.post(
       );
     }
 
-    const productId = req.body?.productId;
+    // 1. Validate Product ID.
+    const productId = cleanString(
+      req.body?.productId,
+      128
+    );
 
-    const result = await generateFacebookCaption(productId);
+    if (!productId) {
+      throw new FacebookError(
+        'Product ID is required.',
+        400,
+        'PRODUCT_ID_REQUIRED'
+      );
+    }
 
-    return res.json(result);
+    // 2. Load the eligible product from Firestore.
+    // Never trust SKU values supplied by the frontend.
+    const product = await getEligibleProductById(
+      productId
+    );
+
+    // 3. Get verified SKU data from backend product service.
+    const captionSkuData = product.captionSkuData || {
+      productSku: cleanString(product.sku, 100),
+      variantSkus: (product.variants || [])
+        .filter(variant => (
+          variant &&
+          cleanString(
+            variant.sku || variant.variantSku,
+            100
+          )
+        ))
+        .map(variant => ({
+          color: cleanString(variant.color, 100),
+          size: cleanString(variant.size, 100),
+          sku: cleanString(
+            variant.sku || variant.variantSku,
+            100
+          )
+        }))
+    };
+
+    // 4. Pass backend product and verified SKU data
+    // to the Gemini caption service.
+    const result = await generateFacebookCaption(
+      productId,
+      captionSkuData
+    );
+
+    // 5. Return caption and verified SKU details.
+    return res.json({
+      ...result,
+
+      productSku: captionSkuData.productSku || '',
+
+      variantSkus: captionSkuData.variantSkus || []
+    });
   })
 );
 

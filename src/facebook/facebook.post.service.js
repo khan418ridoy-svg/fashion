@@ -107,18 +107,73 @@ function normalizeVariants(variants) {
         stock > 0
       );
     })
+    .map(variant => {
+      // Read the original SKU from Firestore.
+      const variantSku = cleanString(
+        variant.sku || variant.variantSku,
+        100
+      );
+
+      return {
+        color: cleanString(variant.color, 100),
+        size: cleanString(variant.size, 100),
+
+        // Existing field used by the current frontend.
+        sku: variantSku,
+
+        // Explicit field for Caption Service integration.
+        variantSku,
+
+        barcode: cleanString(variant.barcode, 100),
+        stock: Number(variant.stock),
+        regularPrice: Number(variant.regularPrice) || 0,
+        sellingPrice: Number(variant.sellingPrice) || 0
+      };
+    });
+}
+
+// ========================================
+// Caption SKU Data
+// ========================================
+
+function buildCaptionSkuData(product) {
+  if (!product || typeof product !== 'object') {
+    return {
+      productSku: '',
+      variantSkus: []
+    };
+  }
+
+  const productSku = cleanString(
+    product.sku,
+    100
+  );
+
+  const variants = Array.isArray(product.variants)
+    ? product.variants
+    : [];
+
+  const variantSkus = variants
+    .filter(variant => (
+      variant &&
+      cleanString(
+        variant.sku || variant.variantSku,
+        100
+      )
+    ))
     .map(variant => ({
       color: cleanString(variant.color, 100),
       size: cleanString(variant.size, 100),
       sku: cleanString(
         variant.sku || variant.variantSku,
         100
-      ),
-      barcode: cleanString(variant.barcode, 100),
-      stock: Number(variant.stock),
-      regularPrice: Number(variant.regularPrice) || 0,
-      sellingPrice: Number(variant.sellingPrice) || 0
+      )
     }));
+
+  return {
+    productSku,
+    variantSkus
+  };
 }
 
 // ========================================
@@ -241,12 +296,25 @@ function buildEligibleProduct(doc) {
     mainImage
   );
 
+  const productSku = cleanString(
+    product.sku,
+    100
+  );
+
+  const captionSkuData = buildCaptionSkuData({
+    sku: productSku,
+    variants
+  });
+
   return {
     id: doc.id,
 
     name: cleanString(product.name, 300),
     slug: cleanString(product.slug, 300),
-    sku: cleanString(product.sku, 100),
+
+    // Product SKU from Firestore.
+    sku: productSku,
+
     barcode: cleanString(product.barcode, 100),
 
     shortDescription: cleanString(
@@ -263,6 +331,9 @@ function buildEligibleProduct(doc) {
     mainImage,
     postImages,
     variants,
+
+    // Explicit verified SKU data for Caption Service.
+    captionSkuData,
 
     summary: {
       hasStock: true,
@@ -343,5 +414,6 @@ async function listEligibleProducts(options = {}) {
 
 module.exports = {
   listEligibleProducts,
-  getEligibleProductById
+  getEligibleProductById,
+  buildCaptionSkuData
 };
