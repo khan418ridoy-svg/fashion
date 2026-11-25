@@ -1,27 +1,16 @@
-
 /* =====================================================
-   Nishat Fashion — Facebook Dashboard
+   Nishat Fashion — Facebook: Dashboard
+   Depends on variables from facebook-base.css
    ===================================================== */
 
 .fb-dashboard {
-  --fbd-border: var(--border-color, #e5e7eb);
-  --fbd-muted: var(--text-muted, #6b7280);
-  --fbd-surface: var(--card-bg, #ffffff);
-  --fbd-soft: var(--soft-bg, #f8fafc);
-  --fbd-text: var(--text-color, #1f2937);
-  --fbd-blue: #1877f2;
-  --fbd-blue-dark: #145fc0;
-  --fbd-green: #087443;
-  --fbd-red: #b42318;
-
   display: grid;
   gap: 26px;
   min-width: 0;
   margin-bottom: 28px;
-  color: var(--fbd-text);
 }
 
-/* ---------- Header ---------- */
+/* ---------- 1. Header ---------- */
 
 .fb-dashboard-header {
   display: flex;
@@ -37,13 +26,13 @@
 }
 
 .fb-dashboard-header p {
-  margin: 0;
   max-width: 620px;
-  color: var(--fbd-muted);
+  margin: 0;
+  color: var(--fb-muted);
   line-height: 1.6;
 }
 
-/* ---------- Main overview cards ---------- */
+/* ---------- 2. Overview cards ---------- */
 
 .fb-dashboard-grid {
   display: grid;
@@ -57,9 +46,9 @@
   gap: 12px;
   min-width: 0;
   padding: 22px;
-  border: 1px solid var(--fbd-border);
+  border: 1px solid var(--fb-border);
   border-radius: 16px;
-  background: var(--fbd-surface);
+  background: var(--fb-surface);
   box-shadow: 0 3px 12px rgb(15 23 42 / 3%);
 }
 
@@ -67,6 +56,11 @@
   margin: 3px 0 0;
   font-size: 1.05rem;
   line-height: 1.4;
+}
+
+.fb-dashboard-card > .fb-button {
+  align-self: flex-start;
+  margin-top: 4px;
 }
 
 .fb-dashboard-card-top {
@@ -87,8 +81,8 @@
 }
 
 .fb-dashboard-icon-blue {
-  background: #eaf2ff;
-  color: #1877f2;
+  background: var(--fb-blue-soft);
+  color: var(--fb-blue);
 }
 
 .fb-dashboard-icon-purple {
@@ -105,55 +99,18 @@
 
 .fb-dashboard-description {
   margin: 0;
-  color: var(--fbd-muted);
+  color: var(--fb-muted);
   font-size: .9rem;
   line-height: 1.6;
 }
 
-.fb-dashboard-card > .fb-button {
-  align-self: flex-start;
-  margin-top: 4px;
-}
-
 .fb-dashboard-mini-status {
-  color: var(--fbd-muted);
+  color: var(--fb-muted);
   font-size: .82rem;
   font-weight: 700;
 }
 
-/* ---------- Status pills ---------- */
-
-.fb-dashboard .fb-status-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--fbd-border);
-  border-radius: 999px;
-  padding: 6px 11px;
-  font-size: .76rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.fb-dashboard .fb-status-pill.is-connected {
-  color: var(--fbd-green);
-  border-color: #a7dfbf;
-  background: #effaf4;
-}
-
-.fb-dashboard .fb-status-pill.is-disconnected {
-  color: var(--fbd-red);
-  border-color: #f1b9b5;
-  background: #fef3f2;
-}
-
-.fb-dashboard .fb-status-pill.is-warning {
-  color: #9a6700;
-  border-color: #f0d28a;
-  background: #fff8e6;
-}
-
-/* ---------- Selected Pages ---------- */
+/* ---------- 3. Selected Pages ---------- */
 
 .fb-dashboard-page-list {
   display: grid;
@@ -167,9 +124,9 @@
   gap: 10px;
   min-width: 0;
   padding: 10px;
-  border: 1px solid var(--fbd-border);
+  border: 1px solid var(--fb-border);
   border-radius: 11px;
-  background: var(--fbd-soft);
+  background: var(--fb-soft);
 }
 
 .fb-dashboard-page-avatar {
@@ -179,7 +136,7 @@
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  background: #1877f2;
+  background: var(--fb-blue);
   color: #fff;
   font-size: 1.1rem;
   font-weight: 800;
@@ -187,8 +144,8 @@
 
 .fb-dashboard-page-info {
   display: grid;
-  gap: 3px;
   flex: 1;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -198,7 +155,7 @@
 }
 
 .fb-dashboard-page-info small {
-  color: var(--fbd-muted);
+  color: var(--fb-muted);
   font-size: .72rem;
   overflow-wrap: anywhere;
 }
@@ -211,7 +168,7 @@
   height: 23px;
   border-radius: 50%;
   background: #e8f7ee;
-  color: var(--fbd-green);
+  color: var(--fb-green);
   font-size: .8rem;
   font-weight: 800;
 }
@@ -220,17 +177,17 @@
   display: grid;
   gap: 5px;
   padding: 15px;
-  border: 1px dashed var(--fbd-border);
+  border: 1px dashed var(--fb-border);
   border-radius: 11px;
-  color: var(--fbd-muted);
+  color: var(--fb-muted);
   font-size: .85rem;
 }
 
 .fb-dashboard-empty strong {
-  color: var(--fbd-text);
+  color: var(--fb-text);
 }
 
-/* ---------- Dashboard sections ---------- */
+/* ---------- 4. Section wrapper ---------- */
 
 .fb-dashboard-section {
   display: grid;
@@ -250,7 +207,7 @@
   font-size: 1.2rem;
 }
 
-/* ---------- Quick Actions ---------- */
+/* ---------- 5. Quick actions ---------- */
 
 .fb-dashboard-actions {
   display: grid;
@@ -264,22 +221,19 @@
   gap: 13px;
   min-width: 0;
   padding: 17px;
-  border: 1px solid var(--fbd-border);
+  border: 1px solid var(--fb-border);
   border-radius: 14px;
-  background: var(--fbd-surface);
+  background: var(--fb-surface);
   color: inherit;
+  font: inherit;
   text-align: left;
   cursor: pointer;
-  font: inherit;
-  transition:
-    border-color .15s ease,
-    background .15s ease,
-    transform .15s ease;
+  transition: border-color .15s ease, background .15s ease, transform .15s ease;
 }
 
 .fb-dashboard-action:hover {
   border-color: #a9c9f7;
-  background: var(--fbd-soft);
+  background: var(--fb-soft);
   transform: translateY(-1px);
 }
 
@@ -290,16 +244,16 @@
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background: #eaf2ff;
-  color: var(--fbd-blue);
+  background: var(--fb-blue-soft);
+  color: var(--fb-blue);
   font-size: 1.35rem;
   font-weight: 700;
 }
 
 .fb-dashboard-action > span:nth-child(2) {
   display: grid;
-  gap: 5px;
   flex: 1;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -309,18 +263,18 @@
 }
 
 .fb-dashboard-action small {
-  color: var(--fbd-muted);
+  color: var(--fb-muted);
   font-size: .78rem;
   line-height: 1.5;
 }
 
 .fb-dashboard-action-arrow {
   flex-shrink: 0;
-  color: var(--fbd-muted);
+  color: var(--fb-muted);
   font-size: 1.2rem;
 }
 
-/* ---------- Feature grid ---------- */
+/* ---------- 6. Feature grid ---------- */
 
 .fb-dashboard-feature-grid {
   display: grid;
@@ -335,9 +289,9 @@
   gap: 10px 12px;
   min-width: 0;
   padding: 17px;
-  border: 1px solid var(--fbd-border);
+  border: 1px solid var(--fb-border);
   border-radius: 14px;
-  background: var(--fbd-surface);
+  background: var(--fb-surface);
 }
 
 .fb-dashboard-feature-icon {
@@ -346,14 +300,14 @@
   width: 38px;
   height: 38px;
   border-radius: 11px;
-  background: var(--fbd-soft);
-  color: var(--fbd-muted);
+  background: var(--fb-soft);
+  color: var(--fb-muted);
   font-size: 1.2rem;
 }
 
 .fb-dashboard-feature.is-available .fb-dashboard-feature-icon {
-  background: #eaf2ff;
-  color: var(--fbd-blue);
+  background: var(--fb-blue-soft);
+  color: var(--fb-blue);
 }
 
 .fb-dashboard-feature h4 {
@@ -364,7 +318,7 @@
 
 .fb-dashboard-feature p {
   margin: 0;
-  color: var(--fbd-muted);
+  color: var(--fb-muted);
   font-size: .78rem;
   line-height: 1.55;
 }
@@ -375,41 +329,49 @@
   padding: 4px 8px;
   border-radius: 999px;
   background: #e8f7ee;
-  color: var(--fbd-green);
+  color: var(--fb-green);
   font-size: .68rem;
   font-weight: 750;
 }
 
 .fb-dashboard-feature-status.is-pending {
-  background: var(--fbd-soft);
-  color: var(--fbd-muted);
+  background: var(--fb-soft);
+  color: var(--fb-muted);
 }
 
-/* ---------- Feedback ---------- */
+/* Clickable "Product Posts" card (added by index.js) */
+.fb-dashboard-feature-clickable {
+  cursor: pointer;
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+
+.fb-dashboard-feature-clickable:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 8%);
+}
+
+.fb-dashboard-feature-clickable:focus-visible {
+  outline: 3px solid var(--fb-blue);
+  outline-offset: 3px;
+}
+
+/* ---------- 7. Feedback ---------- */
 
 .fb-dashboard-feedback {
   min-height: 1.3em;
   margin: 0;
-  color: var(--fbd-muted);
+  color: var(--fb-muted);
   font-size: .85rem;
 }
 
-.fb-dashboard-feedback[data-type="success"] {
-  color: var(--fbd-green);
-}
-
-.fb-dashboard-feedback[data-type="error"] {
-  color: var(--fbd-red);
-}
-
-/* ---------- Buttons ---------- */
+.fb-dashboard-feedback[data-type="success"] { color: var(--fb-green); }
+.fb-dashboard-feedback[data-type="error"]   { color: var(--fb-red); }
 
 .fb-dashboard .fb-button:disabled {
-  opacity: .6;
   cursor: wait;
 }
 
-/* ---------- Responsive ---------- */
+/* ---------- 8. Responsive ---------- */
 
 @media (max-width: 1100px) {
   .fb-dashboard-feature-grid {
@@ -442,16 +404,13 @@
     padding: 16px;
   }
 
-  .fb-dashboard-feature-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .fb-dashboard-feature {
-    padding: 14px;
-  }
-
+  .fb-dashboard-feature,
   .fb-dashboard-action {
     padding: 14px;
+  }
+
+  .fb-dashboard-feature-grid {
+    grid-template-columns: 1fr;
   }
 
   .fb-dashboard-action-arrow {
