@@ -38,6 +38,10 @@ const {
 } = require('./facebook.engagement.service');
 
 
+const {
+  sendFacebookCommentReply
+} = require('./facebook.comment.service');
+
 
 const router = express.Router();
 
@@ -325,6 +329,68 @@ router.get('/comments', async (req, res) => {
     return res.json({
       success: true,
       ...result
+    });
+
+  } catch (error) {
+    return sendError(res, error);
+  }
+});
+
+
+
+// ========================================
+// Send Admin Dashboard Comment Reply
+// POST /api/facebook/comments/:commentId/reply
+// ========================================
+
+router.post('/comments/:commentId/reply', async (req, res) => {
+  try {
+    const adminUid = requireAdminUid(req);
+
+    const commentId = cleanString(
+      req.params.commentId,
+      200
+    );
+
+    const pageId = cleanString(
+      req.body?.pageId,
+      50
+    );
+
+    const postId = cleanString(
+      req.body?.postId,
+      200
+    );
+
+    const message = cleanString(
+      req.body?.message,
+      10000
+    );
+
+    if (!commentId || !pageId || !postId || !message) {
+      throw new FacebookError(
+        'Comment ID, Page ID, Post ID and reply message are required.',
+        400,
+        'REPLY_DATA_REQUIRED'
+      );
+    }
+
+    const result = await sendFacebookCommentReply({
+      adminUid,
+      pageId,
+      postId,
+      parentCommentId: commentId,
+      message,
+
+      // Dashboard replies are always recorded as admin.
+      // The frontend cannot choose AI as the source.
+      source: 'admin'
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Facebook comment reply published successfully.',
+      reply: result
     });
 
   } catch (error) {
