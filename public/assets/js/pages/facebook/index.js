@@ -16,6 +16,11 @@ import {
   bindFacebookDashboardEvents
 } from './dashboard.js';
 
+import {
+  renderFacebookHistory,
+  bindFacebookHistoryEvents
+} from './history.js';
+
 // ========================================
 // Facebook Navigation
 // ========================================
@@ -32,6 +37,10 @@ const FACEBOOK_SECTIONS = [
   {
     id: 'posts',
     label: 'Product Posts'
+  },
+  {
+    id: 'history',
+    label: 'Post History'
   }
 ];
 
@@ -71,6 +80,7 @@ export function renderFacebookPage() {
       ${renderFacebookNavigation()}
 
       <!-- Dashboard -->
+
       <section
         id="fb-section-dashboard"
         class="fb-page-section"
@@ -80,6 +90,7 @@ export function renderFacebookPage() {
       </section>
 
       <!-- Facebook Page Settings -->
+
       <section
         id="fb-section-settings"
         class="fb-page-section"
@@ -90,13 +101,16 @@ export function renderFacebookPage() {
       </section>
 
       <!-- Product Posts -->
+
       <section
         id="fb-section-posts"
         class="fb-page-section fb-posts-section"
         data-fb-section="posts"
         hidden
       >
+
         <header class="fb-section-header">
+
           <div>
             <span class="fb-eyebrow">
               FACEBOOK MANAGEMENT
@@ -117,9 +131,49 @@ export function renderFacebookPage() {
           >
             Back to Dashboard
           </button>
+
         </header>
 
         ${renderFacebookPosts()}
+
+      </section>
+
+      <!-- Published Posts History -->
+
+      <section
+        id="fb-section-history"
+        class="fb-page-section fb-history-section"
+        data-fb-section="history"
+        hidden
+      >
+
+        <header class="fb-section-header">
+
+          <div>
+            <span class="fb-eyebrow">
+              FACEBOOK MANAGEMENT
+            </span>
+
+            <h2>Post History</h2>
+
+            <p>
+              View published posts, failed publishing attempts
+              and Facebook post details.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            class="fb-button"
+            data-fb-back-dashboard
+          >
+            Back to Dashboard
+          </button>
+
+        </header>
+
+        ${renderFacebookHistory()}
+
       </section>
 
     </div>
@@ -140,6 +194,7 @@ function setActiveFacebookSection(root, sectionName) {
   }
 
   // Show selected section and hide the others.
+
   root.querySelectorAll('[data-fb-section]').forEach(section => {
     const isActive =
       section.dataset.fbSection === sectionName;
@@ -151,6 +206,7 @@ function setActiveFacebookSection(root, sectionName) {
   });
 
   // Update navigation button states.
+
   root.querySelectorAll('[data-fb-section-nav]').forEach(button => {
     const isActive =
       button.dataset.fbSectionNav === sectionName;
@@ -164,9 +220,11 @@ function setActiveFacebookSection(root, sectionName) {
   });
 
   // Store current section on the page.
+
   root.dataset.fbActiveSection = sectionName;
 
   // Move viewport to the selected section.
+
   const activeSection = root.querySelector(
     `[data-fb-section="${sectionName}"]`
   );
@@ -185,6 +243,7 @@ function setActiveFacebookSection(root, sectionName) {
 
 function bindFacebookNavigation(root) {
   // Navigation buttons.
+
   root.querySelectorAll('[data-fb-section-nav]').forEach(button => {
     if (button.dataset.bound) return;
 
@@ -198,24 +257,24 @@ function bindFacebookNavigation(root) {
     });
   });
 
-  // Back to Dashboard button.
-  const backButton = root.querySelector(
-    '[data-fb-back-dashboard]'
-  );
+  // Back to Dashboard buttons.
 
-  if (backButton && !backButton.dataset.bound) {
-    backButton.dataset.bound = 'true';
+  root.querySelectorAll('[data-fb-back-dashboard]').forEach(button => {
+    if (button.dataset.bound) return;
 
-    backButton.addEventListener('click', () => {
+    button.dataset.bound = 'true';
+
+    button.addEventListener('click', () => {
       setActiveFacebookSection(root, 'dashboard');
     });
-  }
+  });
 
   // Dashboard quick actions:
   // Create Product Post / Facebook Settings.
   //
   // Capture phase ensures section is shown before
   // dashboard.js tries to scroll to it.
+
   if (!root.dataset.fbDashboardNavigationBound) {
     root.dataset.fbDashboardNavigationBound = 'true';
 
@@ -232,11 +291,14 @@ function bindFacebookNavigation(root) {
         setActiveFacebookSection(root, 'posts');
       } else if (target === 'settings') {
         setActiveFacebookSection(root, 'settings');
+      } else if (target === 'history') {
+        setActiveFacebookSection(root, 'history');
       }
     }, true);
   }
 
   // Management Tools > Product Posts card.
+
   const productPostsCard = Array.from(
     root.querySelectorAll('.fb-dashboard-feature')
   ).find(card => {
@@ -253,6 +315,7 @@ function bindFacebookNavigation(root) {
 
     productPostsCard.setAttribute('role', 'button');
     productPostsCard.setAttribute('tabindex', '0');
+
     productPostsCard.setAttribute(
       'aria-label',
       'Open Product Posts'
@@ -266,6 +329,7 @@ function bindFacebookNavigation(root) {
       });
 
       // Keyboard accessibility.
+
       productPostsCard.addEventListener('keydown', event => {
         if (
           event.key !== 'Enter' &&
@@ -299,17 +363,26 @@ export function bindFacebookPageEvents(context) {
   }
 
   // Navigation must bind before dashboard events.
+
   bindFacebookNavigation(root);
 
   // Dashboard overview and quick actions.
+
   bindFacebookDashboardEvents(root);
 
   // Facebook connection and Page settings.
+
   bindFacebookSettingsEvents(root);
 
   // Product selection, Gemini caption and publishing.
+
   bindFacebookPostsEvents(root);
 
+  // Published Posts History.
+
+  bindFacebookHistoryEvents(root);
+
   // Initial section.
+
   setActiveFacebookSection(root, 'dashboard');
 }
