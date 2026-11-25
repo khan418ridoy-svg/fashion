@@ -241,14 +241,144 @@ export const facebookApi = {
     return request(`/posts/history${suffix}`);
   },
 
-    /**
+  /**
+   * Get Facebook customer comments and replies.
+   *
+   * Supported filters:
+   * pageId, postId, status, includeReplies, limit
+   */
+  async getComments(filters = {}) {
+    const {
+      pageId,
+      postId,
+      status,
+      includeReplies,
+      limit
+    } = filters;
+
+    if (
+      pageId !== undefined &&
+      typeof pageId !== 'string'
+    ) {
+      throw new Error('Invalid Facebook Page ID.');
+    }
+
+    if (
+      postId !== undefined &&
+      typeof postId !== 'string'
+    ) {
+      throw new Error('Invalid Facebook Post ID.');
+    }
+
+    if (
+      status !== undefined &&
+      typeof status !== 'string'
+    ) {
+      throw new Error('Invalid comment status.');
+    }
+
+    if (
+      includeReplies !== undefined &&
+      typeof includeReplies !== 'boolean'
+    ) {
+      throw new Error('includeReplies must be a boolean.');
+    }
+
+    if (
+      limit !== undefined &&
+      (!Number.isInteger(Number(limit)) ||
+        Number(limit) < 1 ||
+        Number(limit) > 500)
+    ) {
+      throw new Error(
+        'Comment limit must be between 1 and 500.'
+      );
+    }
+
+    const query = new URLSearchParams();
+
+    if (pageId?.trim()) {
+      query.set('pageId', pageId.trim());
+    }
+
+    if (postId?.trim()) {
+      query.set('postId', postId.trim());
+    }
+
+    if (status?.trim()) {
+      query.set('status', status.trim());
+    }
+
+    if (includeReplies !== undefined) {
+      query.set('includeReplies', String(includeReplies));
+    }
+
+    if (limit !== undefined) {
+      query.set('limit', String(Number(limit)));
+    }
+
+    const suffix = query.toString()
+      ? `?${query.toString()}`
+      : '';
+
+    return request(`/comments${suffix}`);
+  },
+
+  /**
+   * Publish an Admin Dashboard reply to a Facebook comment.
+   *
+   * The backend records the reply source as "admin".
+   */
+  async replyToComment(commentId, data = {}) {
+    if (
+      typeof commentId !== 'string' ||
+      !commentId.trim()
+    ) {
+      throw new Error('A valid Facebook comment ID is required.');
+    }
+
+    const {
+      pageId,
+      postId,
+      message
+    } = data;
+
+    if (
+      typeof pageId !== 'string' ||
+      !pageId.trim()
+    ) {
+      throw new Error('A valid Facebook Page ID is required.');
+    }
+
+    if (
+      typeof postId !== 'string' ||
+      !postId.trim()
+    ) {
+      throw new Error('A valid Facebook Post ID is required.');
+    }
+
+    if (
+      typeof message !== 'string' ||
+      !message.trim()
+    ) {
+      throw new Error('Reply message cannot be empty.');
+    }
+
+    return request(
+      `/comments/${encodeURIComponent(commentId.trim())}/reply`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          pageId: pageId.trim(),
+          postId: postId.trim(),
+          message: message.trim()
+        })
+      }
+    );
+  },
+
+  /**
    * Delete a Facebook post and its Firestore history.
-   *
-   * Published posts:
-   * Deletes Facebook post first, then Firestore history.
-   *
-   * Failed posts:
-   * Deletes Firestore history only.
    */
   async deletePostHistory(historyId) {
     if (
@@ -267,6 +397,7 @@ export const facebookApi = {
       }
     );
   },
+
   /**
    * Generate Facebook caption for a product.
    */
