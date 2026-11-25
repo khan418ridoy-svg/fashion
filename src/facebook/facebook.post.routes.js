@@ -20,12 +20,19 @@ const {
 } = require('./facebook.caption.service');
 
 const {
-  getSelectedPageToken
+  getSelectedPageToken,
+  getSelectedPages
 } = require('./facebook.connection.service');
 
 const {
   publishFacebookProductPost
 } = require('./facebook.publish.service');
+
+const {
+  createPostHistory,
+  markPostPublished,
+  markPostFailed
+} = require('./facebook.post.history.service');
 
 const router = express.Router();
 
@@ -96,6 +103,7 @@ router.post(
     }
 
     // 1. Validate Product ID.
+
     const productId = cleanString(
       req.body?.productId,
       128
@@ -109,15 +117,17 @@ router.post(
       );
     }
 
-    // 2. Load the eligible product from Firestore.
-    // Never trust SKU values supplied by the frontend.
+    // 2. Load eligible product from Firestore.
+
     const product = await getEligibleProductById(
       productId
     );
 
-    // 3. Get verified SKU data from backend product service.
+    // 3. Get verified SKU data.
+
     const captionSkuData = product.captionSkuData || {
       productSku: cleanString(product.sku, 100),
+
       variantSkus: (product.variants || [])
         .filter(variant => (
           variant &&
@@ -128,7 +138,9 @@ router.post(
         ))
         .map(variant => ({
           color: cleanString(variant.color, 100),
+
           size: cleanString(variant.size, 100),
+
           sku: cleanString(
             variant.sku || variant.variantSku,
             100
@@ -136,14 +148,15 @@ router.post(
         }))
     };
 
-    // 4. Pass backend product and verified SKU data
-    // to the Gemini caption service.
+    // 4. Generate Gemini caption.
+
     const result = await generateFacebookCaption(
       productId,
       captionSkuData
     );
 
-    // 5. Return caption and verified SKU details.
+    // 5. Return generated caption.
+
     return res.json({
       ...result,
 
@@ -171,6 +184,10 @@ router.post(
         'ADMIN_AUTH_REQUIRED'
       );
     }
+
+    // ====================================
+    // 1. Validate Request
+    // ====================================
 
     const productId = cleanString(
       req.body?.productId,
@@ -210,8 +227,10 @@ router.post(
       );
     }
 
-    // 1. Read and validate the product from Firestore.
-    // Never trust image URLs supplied by the frontend.
+    // ====================================
+    // 2. Verify Product
+    // ====================================
+
     const product = await getEligibleProductById(
       productId
     );
@@ -227,30 +246,135 @@ router.post(
       );
     }
 
-    // 2. Get the selected Page token for this admin.
-    // The token is decrypted only on the backend.
+    // ====================================
+    // 3. Verify Selected Facebook Page
+    // ====================================
+
+    const selectedPages = await getSelectedPages(
+      adminUid
+    );
+
+    const selectedPage = selectedPages.find(
+      page => page.pageId === pageId
+    );
+
+    if (!selectedPage) {
+      throw new FacebookError(
+        'This Facebook Page is not selected or does not belong to this admin.',
+        403,
+        'PAGE_ACCESS_DENIED'
+      );
+    }
+
+    // ====================================
+    // 4. Get Page Access Token
+    // ====================================
+
     const pageAccessToken = await getSelectedPageToken(
       adminUid,
       pageId
     );
 
-    // 3. Publish the approved caption and backend-selected images.
-    const result = await publishFacebookProductPost({
+    // ====================================
+    // 5. Create Publishing History
+    // ====================================
+
+    const history = await createPostHistory({
+      adminUid,
+
+      product: {
+        id: product.id,
+        name: product.name,
+        sku: product.sku
+      },
+
       pageId,
-      pageAccessToken,
+
+      pageName: selectedPage.pageName,
+
       caption,
+
       images: product.postImages
     });
 
+    // ====================================
+    // 6. Publish to Facebook
+    // ====================================
+
+    let publishResult;
+
+    try {
+      publishResult = await publishFacebookProductPost({
+        pageId,
+
+        pageAccessToken,
+
+        caption,
+
+        images: product.postImages
+      });
+
+    } catch (error) {
+      // Save publishing failure.
+
+      try {
+        await markPostFailed(
+          history.id,
+          adminUid,
+          error
+        );
+
+      } catch (historyError) {
+        console.error(
+          '[FACEBOOK HISTORY] Failed to save publishing error:',
+          historyError.message
+        );
+      }
+
+      throw error;
+    }
+
+    // ====================================
+    // 7. Save Successful Publishing Result
+    // ====================================
+
+    const historyResult = await markPostPublished(
+      history.id,
+      adminUid,
+      publishResult
+    );
+
+    // ====================================
+    // 8. Return Success
+    // ====================================
+
     return res.status(200).json({
       success: true,
+
       message: 'Facebook product post published successfully.',
+
       post: {
-        postId: result.postId,
-        pageId: result.pageId,
+        postId: publishResult.postId,
+
+        postUrl: historyResult.postUrl,
+
+        pageId: publishResult.pageId || pageId,
+
+        pageName: selectedPage.pageName,
+
         productId: product.id,
+
         productName: product.name,
-        imageCount: result.imageCount
+
+        imageCount: publishResult.imageCount
+      },
+
+      history: {
+        id: history.id,
+
+        status: 'published',
+
+        publishedAt: historyResult.publishedAt
       }
     });
   })
