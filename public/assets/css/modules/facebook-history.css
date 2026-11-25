@@ -633,6 +633,33 @@
   text-decoration: none;
 }
 
+
+/* Delete Facebook Post */
+
+.fb-history-delete-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: #f2b8b5;
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.fb-history-delete-button:hover:not(:disabled) {
+  border-color: #b42318;
+  background: #fee4e2;
+  color: #912018;
+}
+
+.fb-history-delete-button:focus-visible {
+  outline: 3px solid rgb(180 35 24 / 20%);
+  outline-offset: 2px;
+}
+
+.fb-history-delete-button:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
 /* Additional records notice */
 
 .fb-history-more {
