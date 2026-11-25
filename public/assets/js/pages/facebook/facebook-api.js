@@ -61,6 +61,20 @@ async function request(path, options = {}) {
 }
 
 /**
+ * Validate history date.
+ */
+function validateHistoryDate(value, fieldName) {
+  if (!value) return;
+
+  if (
+    typeof value !== 'string' ||
+    Number.isNaN(new Date(value).getTime())
+  ) {
+    throw new Error(`Invalid ${fieldName} date.`);
+  }
+}
+
+/**
  * Facebook API methods.
  */
 export const facebookApi = {
@@ -137,6 +151,94 @@ export const facebookApi = {
       : '';
 
     return request(`/posts/products${suffix}`);
+  },
+
+  /**
+   * Get Facebook publishing history.
+   *
+   * Supported filters:
+   * status, pageId, startDate, endDate, limit
+   */
+  async getPostHistory(filters = {}) {
+    const {
+      status,
+      pageId,
+      startDate,
+      endDate,
+      limit
+    } = filters;
+
+    const allowedStatuses = [
+      'publishing',
+      'published',
+      'failed'
+    ];
+
+    if (
+      status &&
+      !allowedStatuses.includes(status)
+    ) {
+      throw new Error('Invalid history status.');
+    }
+
+    if (
+      pageId !== undefined &&
+      typeof pageId !== 'string'
+    ) {
+      throw new Error('Invalid Facebook Page ID.');
+    }
+
+    validateHistoryDate(startDate, 'Start');
+    validateHistoryDate(endDate, 'End');
+
+    if (
+      startDate &&
+      endDate &&
+      new Date(startDate) > new Date(endDate)
+    ) {
+      throw new Error(
+        'Start date must be before end date.'
+      );
+    }
+
+    if (
+      limit !== undefined &&
+      (!Number.isInteger(Number(limit)) ||
+        Number(limit) < 1 ||
+        Number(limit) > 100)
+    ) {
+      throw new Error(
+        'History limit must be between 1 and 100.'
+      );
+    }
+
+    const query = new URLSearchParams();
+
+    if (status) {
+      query.set('status', status);
+    }
+
+    if (pageId?.trim()) {
+      query.set('pageId', pageId.trim());
+    }
+
+    if (startDate) {
+      query.set('startDate', startDate);
+    }
+
+    if (endDate) {
+      query.set('endDate', endDate);
+    }
+
+    if (limit !== undefined) {
+      query.set('limit', String(Number(limit)));
+    }
+
+    const suffix = query.toString()
+      ? `?${query.toString()}`
+      : '';
+
+    return request(`/posts/history${suffix}`);
   },
 
   /**
