@@ -33,6 +33,12 @@ const {
   removeAdminPages
 } = require('./facebook.connection.service');
 
+const {
+  listComments
+} = require('./facebook.engagement.service');
+
+
+
 const router = express.Router();
 
 // ========================================
@@ -274,6 +280,57 @@ router.get('/oauth/callback', async (req, res) => {
 // ========================================
 router.use('/webhook', facebookWebhookRouter);
 router.use(adminAuth);
+
+// ========================================
+// Facebook Comment History
+// GET /api/facebook/comments
+// ========================================
+
+router.get('/comments', async (req, res) => {
+  try {
+    const adminUid = requireAdminUid(req);
+
+    const pageId = cleanString(req.query.pageId, 50);
+    const postId = cleanString(req.query.postId, 200);
+    const status = cleanString(req.query.status, 20).toLowerCase();
+
+    let includeReplies;
+
+    if (req.query.includeReplies === 'true') {
+      includeReplies = true;
+    } else if (req.query.includeReplies === 'false') {
+      includeReplies = false;
+    }
+
+    const limit = req.query.limit
+      ? Number(req.query.limit)
+      : 100;
+
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+      throw new FacebookError(
+        'Limit must be between 1 and 500.',
+        400,
+        'INVALID_COMMENT_LIMIT'
+      );
+    }
+
+    const result = await listComments(adminUid, {
+      pageId,
+      postId,
+      status,
+      includeReplies,
+      limit
+    });
+
+    return res.json({
+      success: true,
+      ...result
+    });
+
+  } catch (error) {
+    return sendError(res, error);
+  }
+});
 
 // ========================================
 // Start Facebook OAuth
