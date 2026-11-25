@@ -11,6 +11,13 @@ import {
   bindFacebookPostsEvents
 } from './posts.js';
 
+
+import {
+  renderFacebookDashboard,
+  bindFacebookDashboardEvents
+} from './dashboard.js';
+
+
 // ========================================
 // Render Facebook Page
 // ========================================
@@ -18,6 +25,8 @@ import {
 export function renderFacebookPage() {
   return `
     <div class="fb-page-layout">
+
+      ${renderFacebookDashboard()}
 
       ${renderFacebookSettings()}
 
@@ -43,6 +52,9 @@ export function bindFacebookPageEvents(context) {
     );
     return;
   }
+
+  // Facebook Dashboard
+  bindFacebookDashboardEvents(root);
 
   // Facebook account and Page settings
   bindFacebookSettingsEvents(root);

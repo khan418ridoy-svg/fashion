@@ -272,3 +272,98 @@
   .fb-card { padding: 14px; }
   .fb-card-heading { flex-direction: column; align-items: flex-start; }
 }
+
+
+
+
+
+
+/* ========================================
+   Facebook Section Navigation
+======================================== */
+
+.fb-navigation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--fb-border);
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+}
+
+.fb-navigation-button {
+  border: 1px solid var(--fb-border);
+  border-radius: 9px;
+  background: var(--fb-surface);
+  color: var(--fb-muted);
+  padding: 10px 16px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+  transition:
+    background .15s,
+    color .15s,
+    border-color .15s;
+}
+
+.fb-navigation-button:hover {
+  background: var(--fb-soft);
+  color: var(--text-color, #111827);
+}
+
+.fb-navigation-button.is-active {
+  background: var(--fb-blue);
+  border-color: var(--fb-blue);
+  color: #fff;
+}
+
+/* ========================================
+   Facebook Dashboard
+======================================== */
+
+.fb-dashboard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.fb-dashboard-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.fb-dashboard-status-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--fb-border);
+  border-radius: 10px;
+  min-width: 0;
+}
+
+.fb-dashboard-status-card strong {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 700px) {
+  .fb-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .fb-dashboard-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fb-navigation {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .fb-navigation-button {
+    padding: 10px 6px;
+    font-size: .85rem;
+  }
+}
