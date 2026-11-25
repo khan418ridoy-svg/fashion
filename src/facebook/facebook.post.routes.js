@@ -1,6 +1,6 @@
 
 'use strict';
-
+const { db } = require('../config/firebase');
 const express = require('express');
 
 const adminAuth = require('../middleware/adminAuth');
@@ -25,14 +25,16 @@ const {
 } = require('./facebook.connection.service');
 
 const {
-  publishFacebookProductPost
+   publishFacebookProductPost,
+  deleteFacebookPublishedPost
 } = require('./facebook.publish.service');
 
 const {
-  createPostHistory,
+   createPostHistory,
   markPostPublished,
   markPostFailed,
-  listPostHistory
+  listPostHistory,
+  deletePostHistory
 } = require('./facebook.post.history.service');
 
 const router = express.Router();
@@ -55,6 +57,163 @@ function asyncHandler(handler) {
 
 router.use(adminAuth);
 
+
+
+
+
+
+
+
+
+// ========================================
+// DELETE Facebook Post + Firestore History
+// DELETE /api/facebook/posts/history/:historyId
+// ========================================
+
+router.delete(
+  '/history/:historyId',
+  asyncHandler(async (req, res) => {
+    const adminUid = req.admin?.uid;
+
+    if (!adminUid) {
+      throw new FacebookError(
+        'Admin authentication required.',
+        401,
+        'ADMIN_AUTH_REQUIRED'
+      );
+    }
+
+    const historyId = cleanString(
+      req.params.historyId,
+      128
+    );
+
+    if (!historyId) {
+      throw new FacebookError(
+        'Post history ID is required.',
+        400,
+        'HISTORY_ID_REQUIRED'
+      );
+    }
+
+    const historyRef = db
+      .collection('facebookPostHistory')
+      .doc(historyId);
+
+    const snapshot = await historyRef.get();
+
+    if (!snapshot.exists) {
+      throw new FacebookError(
+        'Post history record was not found.',
+        404,
+        'HISTORY_NOT_FOUND'
+      );
+    }
+
+    const history = snapshot.data() || {};
+
+    if (history.adminUid !== adminUid) {
+      throw new FacebookError(
+        'You are not allowed to delete this post.',
+        403,
+        'HISTORY_ACCESS_DENIED'
+      );
+    }
+
+    if (history.status === 'publishing') {
+      throw new FacebookError(
+        'A publishing post cannot be deleted.',
+        409,
+        'POST_PUBLISHING'
+      );
+    }
+
+    // Failed post: only Firestore history exists.
+    if (history.status === 'failed') {
+      await deletePostHistory(
+        historyId,
+        adminUid
+      );
+
+      return res.json({
+        success: true,
+        message: 'Failed post history deleted.',
+        historyId,
+        facebookDeleted: false,
+        firestoreDeleted: true
+      });
+    }
+
+    if (history.status !== 'published') {
+      throw new FacebookError(
+        'Unsupported post history status.',
+        409,
+        'INVALID_HISTORY_STATUS'
+      );
+    }
+
+    const postId = cleanString(
+      history.postId,
+      200
+    );
+
+    const pageId = cleanString(
+      history.pageId,
+      50
+    );
+
+    if (!postId || !pageId) {
+      throw new FacebookError(
+        'Facebook post ID or Page ID is missing.',
+        409,
+        'FACEBOOK_POST_DATA_MISSING'
+      );
+    }
+
+    // Verify that the Page belongs to this admin
+    // and is currently selected.
+    const selectedPages = await getSelectedPages(
+      adminUid
+    );
+
+    const selectedPage = selectedPages.find(
+      page => page.pageId === pageId
+    );
+
+    if (!selectedPage) {
+      throw new FacebookError(
+        'The Facebook Page is not selected. Select it before deleting its post.',
+        403,
+        'PAGE_ACCESS_DENIED'
+      );
+    }
+
+    // Get the Page token on the backend only.
+    const pageAccessToken = await getSelectedPageToken(
+      adminUid,
+      pageId
+    );
+
+    // Delete Facebook post first.
+    await deleteFacebookPublishedPost({
+      postId,
+      pageAccessToken
+    });
+
+    // Delete Firestore history only after Facebook confirms deletion.
+    await historyRef.delete();
+
+    return res.json({
+      success: true,
+      message: 'Facebook post and history deleted successfully.',
+      historyId,
+      postId,
+      pageId,
+      facebookDeleted: true,
+      firestoreDeleted: true
+    });
+  })
+);
 // ========================================
 // GET Post History
 // GET /api/facebook/posts/history
