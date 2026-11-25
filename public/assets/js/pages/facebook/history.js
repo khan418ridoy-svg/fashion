@@ -230,7 +230,22 @@ function renderHistoryCard(post) {
       </a>
     `
     : '';
+  const canDelete = (
+    status === 'published' ||
+    status === 'failed'
+  );
 
+  const deleteButtonHtml = canDelete
+    ? `
+      <button
+        type="button"
+        class="fb-button fb-history-delete-button"
+        data-fb-history-delete="${escapeHtml(post.id)}"
+      >
+        Delete Post
+      </button>
+    `
+    : '';
   const errorHtml = status === 'failed'
     ? `
       <div class="fb-history-error">
@@ -340,8 +355,9 @@ function renderHistoryCard(post) {
 
       ${errorHtml}
 
-      <div class="fb-history-card-actions">
+            <div class="fb-history-card-actions">
         ${postLinkHtml}
+        ${deleteButtonHtml}
       </div>
 
     </article>
@@ -466,7 +482,88 @@ async function loadPostHistory(root, state) {
     }
   }
 }
+// ========================================
+// Delete History Post
+// ========================================
 
+async function deleteHistoryPost(root, state, historyId, button) {
+  if (state.loading || state.deleting) return;
+
+  const post = state.posts.find(
+    item => String(item.id) === String(historyId)
+  );
+
+  if (!post) {
+    setFeedback(
+      root,
+      'Post history record was not found. Refresh the history.',
+      'error'
+    );
+    return;
+  }
+
+  const isPublished = post.status === 'published';
+
+  const confirmationMessage = isPublished
+    ? 'This will permanently delete the published post from Facebook and remove its Firestore history. Continue?'
+    : 'This will permanently delete this failed post history from Firestore. Continue?';
+
+  if (!window.confirm(confirmationMessage)) {
+    return;
+  }
+
+  state.deleting = true;
+
+  const originalText = button.textContent;
+
+  button.disabled = true;
+  button.textContent = 'Deleting...';
+
+  setFeedback(
+    root,
+    isPublished
+      ? 'Deleting Facebook post and history...'
+      : 'Deleting failed post history...'
+  );
+
+  try {
+    const result = await facebookApi.deletePostHistory(
+      historyId
+    );
+
+    if (!result?.success) {
+      throw new Error(
+        result?.message || 'Post deletion was not confirmed.'
+      );
+    }
+
+    setFeedback(
+      root,
+      result.message || 'Post deleted successfully.',
+      'success'
+    );
+
+    await loadPostHistory(root, state);
+
+  } catch (error) {
+    console.error(
+      '[FACEBOOK HISTORY] Delete failed:',
+      error
+    );
+
+    setFeedback(
+      root,
+      error.message || 'Failed to delete Facebook post.',
+      'error'
+    );
+
+    button.disabled = false;
+    button.textContent = originalText;
+
+  } finally {
+    state.deleting = false;
+  }
+}
 // ========================================
 // Reset Filters
 // ========================================
@@ -656,11 +753,13 @@ export function renderFacebookHistory() {
 // Bind History Events
 // ========================================
 
+
 export function bindFacebookHistoryEvents(root = document) {
   const state = {
     posts: [],
     pages: [],
-    loading: false
+    loading: false,
+    deleting: false
   };
 
   // Refresh button.
@@ -703,6 +802,48 @@ export function bindFacebookHistoryEvents(root = document) {
     resetButton.addEventListener('click', () => {
       resetHistoryFilters(root);
       loadPostHistory(root, state);
+    });
+  }
+
+  // Delete post history using event delegation.
+
+  const historyList = root.querySelector(
+    '[data-fb-history-list]'
+  );
+
+  if (
+    historyList &&
+    !historyList.dataset.deleteBound
+  ) {
+    historyList.dataset.deleteBound = 'true';
+
+    historyList.addEventListener('click', event => {
+      const target = event.target;
+
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      const button = target.closest(
+        '[data-fb-history-delete]'
+      );
+
+      if (!button || !historyList.contains(button)) {
+        return;
+      }
+
+      const historyId = button.dataset.fbHistoryDelete;
+
+      if (!historyId) {
+        return;
+      }
+
+      deleteHistoryPost(
+        root,
+        state,
+        historyId,
+        button
+      );
     });
   }
 
