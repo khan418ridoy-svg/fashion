@@ -1,4 +1,3 @@
-
 'use strict';
 
 import { facebookApi } from './facebook-api.js';
@@ -40,6 +39,18 @@ function getProductPrice(product) {
   }
 
   return `${formatMoney(min)} – ${formatMoney(max)}`;
+}
+
+function buildSkuCaptionBlock(result, product) {
+  const productSku = String(
+    result?.productSku || product?.sku || ''
+  ).trim();
+
+  if (!productSku) {
+    throw new Error('Product SKU is missing.');
+  }
+
+  return `Product SKU: ${productSku}`;
 }
 
 function getProductImages(product) {
@@ -549,9 +560,7 @@ function renderProductPreview(root, product) {
       </div>
     </div>
   `;
-}
-
-// ========================================
+}// ========================================
 // Caption Editor
 // ========================================
 
@@ -584,11 +593,20 @@ function renderCaptionEditor(root, state) {
 // Generate Caption
 // ========================================
 
+
 async function generateCaption(root, state) {
   const productId = state.selectedProductId;
 
   if (!productId) {
-    setFeedback(root, 'Please select a product first.', 'error');
+    setFeedback(
+      root,
+      'Please select a product first.',
+      'error'
+    );
+    return;
+  }
+
+  if (state.generatingCaption) {
     return;
   }
 
@@ -599,11 +617,15 @@ async function generateCaption(root, state) {
 
   renderCaptionEditor(root, state);
 
-  setFeedback(root, 'Gemini is generating the Facebook caption...');
+  setFeedback(
+    root,
+    'Gemini is generating the Facebook caption...'
+  );
 
   try {
     const result = await facebookApi.generateCaption(productId);
 
+    // Ignore outdated requests.
     if (
       state.selectedProductId !== productId ||
       state.captionRequestId !== requestId
@@ -613,23 +635,25 @@ async function generateCaption(root, state) {
 
     if (
       !result ||
+      result.success !== true ||
       typeof result.caption !== 'string' ||
       !result.caption.trim()
     ) {
-      throw new Error('Gemini returned an empty caption.');
+      throw new Error(
+        'Backend returned an invalid Facebook caption.'
+      );
     }
 
-    // Remove stock information while preserving variant and price.
-state.caption = result.caption
-  .replace(/\s*\|\s*Stock\s*:\s*\d+/gi, '')
-  .replace(/^\s*Stock\s*:\s*\d+\s*$/gim, '')
-  .trim();
+    // Backend already generates the complete caption.
+    // Do not rebuild or modify it in frontend.
+    state.caption = result.caption.trim();
 
+    // Put the complete caption into the textarea.
     renderCaptionEditor(root, state);
 
     setFeedback(
       root,
-      'Caption generated. Review and edit it before publishing.',
+      'Caption generated successfully. Review and edit it before publishing.',
       'success'
     );
 
@@ -652,6 +676,7 @@ state.caption = result.caption
     }
   }
 }
+
 
 // ========================================
 // Product List
@@ -925,9 +950,7 @@ export function renderFacebookPosts() {
 
     </section>
   `;
-}
-
-// ========================================
+}// ========================================
 // Bind Facebook Posts Events
 // ========================================
 
@@ -1039,8 +1062,6 @@ export function bindFacebookPostsEvents(root = document) {
   const publishButton = root.querySelector('[data-fb-publish]');
 
   if (publishButton && !publishButton.dataset.bound) {
-    publishButton.dataset.bound = 'true';
-
     publishButton.dataset.bound = 'true';
 
     publishButton.addEventListener('click', () => {
