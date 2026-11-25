@@ -537,6 +537,73 @@ async function listPostHistory(
   };
 }
 
+
+
+
+// ========================================
+// Delete Post History
+// ========================================
+
+async function deletePostHistory(historyId, adminUid) {
+  const uid = normalizeAdminUid(adminUid);
+
+  const id = cleanString(historyId, 128);
+
+  if (!id) {
+    throw new FacebookError(
+      'Post history ID is required.',
+      400,
+      'HISTORY_ID_REQUIRED'
+    );
+  }
+
+  const ref = db
+    .collection(COLLECTION)
+    .doc(id);
+
+  const snapshot = await ref.get();
+
+  if (!snapshot.exists) {
+    throw new FacebookError(
+      'Post history record was not found.',
+      404,
+      'HISTORY_NOT_FOUND'
+    );
+  }
+
+  const data = snapshot.data() || {};
+
+  if (data.adminUid !== uid) {
+    throw new FacebookError(
+      'You are not allowed to delete this post history.',
+      403,
+      'HISTORY_ACCESS_DENIED'
+    );
+  }
+
+  if (data.status === 'publishing') {
+    throw new FacebookError(
+      'A publishing post cannot be deleted.',
+      409,
+      'POST_PUBLISHING'
+    );
+  }
+
+  if (data.status === 'published') {
+    throw new FacebookError(
+      'Delete the Facebook post before deleting its history.',
+      409,
+      'FACEBOOK_POST_DELETE_REQUIRED'
+    );
+  }
+
+  await ref.delete();
+
+  return {
+    success: true,
+    historyId: id
+  };
+}
 // ========================================
 // Exports
 // ========================================
@@ -545,5 +612,6 @@ module.exports = {
   createPostHistory,
   markPostPublished,
   markPostFailed,
-  listPostHistory
+  listPostHistory,
+  deletePostHistory
 };
