@@ -15,6 +15,9 @@ const {
   getSelectedPageToken
 } = require('./facebook.connection.service');
 
+  const {
+  syncGraphComments
+} = require('./facebook.engagement.service');
 // ========================================
 // Constants
 // ========================================
@@ -316,9 +319,6 @@ async function getPageInsights(
     normalizedPageId
   );
 
-  const {
-  syncGraphComments
-} = require('./facebook.engagement.service');
 
   const response = await authenticatedGraphRequest(
     `${normalizedPageId}/insights`,
