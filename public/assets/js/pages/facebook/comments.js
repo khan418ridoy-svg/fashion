@@ -90,6 +90,7 @@ function setFeedback(root, message, type = '') {
 // Filters
 // ========================================
 
+
 function getCommentFilters(root) {
   return {
     pageId: root.querySelector(
@@ -100,7 +101,6 @@ function getCommentFilters(root) {
       '[data-fb-comments-status]'
     )?.value || 'active',
 
-    includeReplies: true,
     limit: 500
   };
 }
