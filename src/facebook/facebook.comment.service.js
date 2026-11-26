@@ -22,6 +22,12 @@ const {
   recordOutgoingReply
 } = require('./facebook.engagement.service');
 
+const {
+  recordOutgoingReply,
+  recordOutgoingComment
+} = require('./facebook.engagement.service');
+
+
 const COMMENTS_COLLECTION = 'facebookComments';
 
 const MAX_REPLY_LENGTH = 10000;
@@ -169,6 +175,117 @@ async function verifyParentComment({
 }
 
 // ========================================
+// Send Admin Top-level Post Comment
+// ========================================
+
+async function sendFacebookPostComment(options = {}) {
+  const adminUid = cleanString(options.adminUid, 128);
+  const pageId = cleanString(options.pageId, 50);
+  const postId = cleanString(options.postId, 200);
+
+  const message = typeof options.message === 'string'
+    ? options.message.trim()
+    : '';
+
+  if (!adminUid) {
+    throw new FacebookError(
+      'Admin authentication required.',
+      401,
+      'ADMIN_AUTH_REQUIRED'
+    );
+  }
+
+  if (!/^\d{5,30}$/.test(pageId)) {
+    throw new FacebookError(
+      'Invalid Facebook Page ID.',
+      400,
+      'INVALID_PAGE_ID'
+    );
+  }
+
+  if (!postId || !postId.startsWith(`${pageId}_`)) {
+    throw new FacebookError(
+      'Invalid Facebook Post ID.',
+      400,
+      'INVALID_POST_ID'
+    );
+  }
+
+  if (!message || message.length > MAX_REPLY_LENGTH) {
+    throw new FacebookError(
+      'Comment must contain 1 to 10000 characters.',
+      400,
+      'INVALID_COMMENT_MESSAGE'
+    );
+  }
+
+  const pageAccessToken = await getSelectedPageToken(
+    adminUid,
+    pageId
+  );
+
+  const graphResult = await authenticatedGraphRequest(
+    `${postId}/comments`,
+    pageAccessToken,
+    {
+      method: 'POST',
+      params: {
+        message
+      }
+    }
+  );
+
+  const commentId = cleanString(graphResult?.id, 200);
+
+  if (!commentId) {
+    throw new FacebookError(
+      'Facebook did not return a Comment ID.',
+      502,
+      'FACEBOOK_COMMENT_ID_MISSING'
+    );
+  }
+
+  try {
+    await recordOutgoingComment({
+      adminUid,
+      pageId,
+      postId,
+      commentId,
+      message,
+      source: 'admin'
+    });
+  } catch (error) {
+    console.error('[FACEBOOK COMMENT LOG ERROR]', {
+      pageId,
+      postId,
+      commentId,
+      message: error.message
+    });
+
+    const logError = new FacebookError(
+      'Facebook published the comment, but saving its history failed.',
+      502,
+      'FACEBOOK_COMMENT_LOG_FAILED'
+    );
+
+    logError.commentPublished = true;
+    logError.commentId = commentId;
+
+    throw logError;
+  }
+
+  return {
+    success: true,
+    commentId,
+    pageId,
+    postId,
+    source: 'admin',
+    message,
+    publishedAt: new Date()
+  };
+}
+
+// ========================================
 // Send Facebook Comment Reply
 // ========================================
 
@@ -275,5 +392,6 @@ async function sendFacebookCommentReply(options = {}) {
 // ========================================
 
 module.exports = {
-  sendFacebookCommentReply
+  sendFacebookCommentReply,
+  sendFacebookPostComment
 };

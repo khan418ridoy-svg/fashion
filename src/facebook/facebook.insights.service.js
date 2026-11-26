@@ -316,6 +316,10 @@ async function getPageInsights(
     normalizedPageId
   );
 
+  const {
+  syncGraphComments
+} = require('./facebook.engagement.service');
+
   const response = await authenticatedGraphRequest(
     `${normalizedPageId}/insights`,
     pageAccessToken,
@@ -354,6 +358,188 @@ async function getPageInsights(
   };
 }
 
+
+// ========================================
+// Page Posts Feed
+// ========================================
+
+function normalizeFeedPostId(postId, pageId) {
+  const id = cleanString(postId, 200);
+
+  if (
+    !id ||
+    !id.startsWith(`${pageId}_`) ||
+    !/^\d{5,30}_[A-Za-z0-9.-]{1,100}$/.test(id)
+  ) {
+    throw new FacebookError(
+      'Invalid Facebook Page Post ID.',
+      400,
+      'INVALID_POST_ID'
+    );
+  }
+
+  return id;
+}
+
+async function getPagePosts(adminUid, pageId, options = {}) {
+  const uid = normalizeAdminUid(adminUid);
+  const normalizedPageId = normalizePageId(pageId);
+
+  const limit = Number(options.limit ?? 20);
+
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+    throw new FacebookError(
+      'Post limit must be between 1 and 50.',
+      400,
+      'INVALID_POST_LIMIT'
+    );
+  }
+
+  const after = cleanString(options.after, 500);
+
+  const pageAccessToken = await getSelectedPageToken(
+    uid,
+    normalizedPageId
+  );
+
+  const response = await authenticatedGraphRequest(
+    `${normalizedPageId}/posts`,
+    pageAccessToken,
+    {
+      method: 'GET',
+      params: {
+        fields: [
+          'id',
+          'message',
+          'created_time',
+          'permalink_url',
+          'full_picture',
+          'shares',
+          'attachments{media_type,media,url,subattachments}',
+          'reactions.limit(0).summary(true)',
+          'comments.limit(0).summary(true)'
+        ].join(','),
+        limit,
+        ...(after ? { after } : {})
+      }
+    }
+  );
+
+  const posts = Array.isArray(response.data)
+    ? response.data
+    : [];
+
+  return {
+    pageId: normalizedPageId,
+
+    posts: posts.map(post => ({
+      id: cleanString(post.id, 200),
+      message: cleanString(post.message, 10000),
+      createdTime: post.created_time || null,
+      permalinkUrl: cleanString(post.permalink_url, 1000),
+      fullPicture: cleanString(post.full_picture, 2000),
+      shares: Number(post.shares?.count) || 0,
+      reactions: Number(
+        post.reactions?.summary?.total_count
+      ) || 0,
+      comments: Number(
+        post.comments?.summary?.total_count
+      ) || 0
+    })),
+
+    paging: {
+      next: Boolean(response.paging?.next),
+      after: cleanString(
+        response.paging?.cursors?.after,
+        500
+      )
+    }
+  };
+}
+
+// ========================================
+// Read and Sync a Post's Comments
+// ========================================
+
+async function getPostComments(adminUid, pageId, postId) {
+  const uid = normalizeAdminUid(adminUid);
+  const normalizedPageId = normalizePageId(pageId);
+  const normalizedPostId = normalizeFeedPostId(
+    postId,
+    normalizedPageId
+  );
+
+  const pageAccessToken = await getSelectedPageToken(
+    uid,
+    normalizedPageId
+  );
+
+  const response = await authenticatedGraphRequest(
+    `${normalizedPostId}/comments`,
+    pageAccessToken,
+    {
+      method: 'GET',
+      params: {
+        fields: 'id,message,created_time,from,parent',
+        limit: 100,
+        filter: 'stream'
+      }
+    }
+  );
+
+  const topLevelComments = Array.isArray(response.data)
+    ? response.data
+    : [];
+
+  const allComments = [];
+
+  for (const comment of topLevelComments) {
+    allComments.push({
+      ...comment,
+      parent_id: ''
+    });
+
+    const commentId = cleanString(comment.id, 200);
+
+    if (!commentId) continue;
+
+    const repliesResponse = await authenticatedGraphRequest(
+      `${commentId}/comments`,
+      pageAccessToken,
+      {
+        method: 'GET',
+        params: {
+          fields: 'id,message,created_time,from,parent',
+          limit: 100
+        }
+      }
+    );
+
+    const replies = Array.isArray(repliesResponse.data)
+      ? repliesResponse.data
+      : [];
+
+    for (const reply of replies) {
+      allComments.push({
+        ...reply,
+        parent_id: commentId
+      });
+    }
+  }
+
+  await syncGraphComments({
+    adminUid: uid,
+    pageId: normalizedPageId,
+    postId: normalizedPostId,
+    comments: allComments
+  });
+
+  return {
+    pageId: normalizedPageId,
+    postId: normalizedPostId,
+    total: allComments.length
+  };
+}
 // ========================================
 // Get Post Insights
 // ========================================
@@ -411,6 +597,8 @@ async function getPostInsights(
 module.exports = {
   getPageInsights,
   getPostInsights,
+  getPagePosts,
+  getPostComments,
   normalizeDateRange,
   normalizeInsights,
   summarizePageInsights

@@ -38,17 +38,21 @@ const {
 } = require('./facebook.engagement.service');
 
 
-const {
-  sendFacebookCommentReply
-} = require('./facebook.comment.service');
 
 
 const router = express.Router();
 
 const {
   getPageInsights,
-  getPostInsights
+  getPostInsights,
+  getPagePosts,
+  getPostComments
 } = require('./facebook.insights.service');
+
+const {
+  sendFacebookCommentReply,
+  sendFacebookPostComment
+} = require('./facebook.comment.service');
 
 
 // ========================================
@@ -342,7 +346,93 @@ router.get('/comments', async (req, res) => {
   }
 });
 
+// ========================================
+// Page Posts Feed
+// GET /api/facebook/posts/feed
+// ========================================
 
+router.get('/posts/feed', async (req, res) => {
+  try {
+    const adminUid = requireAdminUid(req);
+    const pageId = cleanString(req.query.pageId, 50);
+    const after = cleanString(req.query.after, 500);
+
+    const limit = req.query.limit
+      ? Number(req.query.limit)
+      : 20;
+
+    const result = await getPagePosts(
+      adminUid,
+      pageId,
+      { limit, after }
+    );
+
+    return res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    return sendError(res, error);
+  }
+});
+
+// ========================================
+// Load and Sync Post Comments
+// GET /api/facebook/posts/:postId/comments
+// ========================================
+
+router.get('/posts/:postId/comments', async (req, res) => {
+  try {
+    const adminUid = requireAdminUid(req);
+    const pageId = cleanString(req.query.pageId, 50);
+    const postId = cleanString(req.params.postId, 200);
+
+    await getPostComments(adminUid, pageId, postId);
+
+    const result = await listComments(adminUid, {
+      pageId,
+      postId,
+      includeReplies: true,
+      limit: 500
+    });
+
+    return res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    return sendError(res, error);
+  }
+});
+
+// ========================================
+// Publish Admin Comment on a Post
+// POST /api/facebook/posts/:postId/comments
+// ========================================
+
+router.post('/posts/:postId/comments', async (req, res) => {
+  try {
+    const adminUid = requireAdminUid(req);
+    const pageId = cleanString(req.body?.pageId, 50);
+    const postId = cleanString(req.params.postId, 200);
+    const message = cleanString(req.body?.message, 10000);
+
+    const result = await sendFacebookPostComment({
+      adminUid,
+      pageId,
+      postId,
+      message
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Facebook comment published successfully.',
+      comment: result
+    });
+  } catch (error) {
+    return sendError(res, error);
+  }
+});
 
 // ========================================
 // Send Admin Dashboard Comment Reply

@@ -507,6 +507,204 @@ async function recordOutgoingReply(options = {}) {
   };
 }
 
+
+// ========================================
+// Sync Graph API Comments into History
+// ========================================
+
+async function syncGraphComments(options = {}) {
+  const adminUid = cleanString(options.adminUid, 128);
+  const pageId = cleanString(options.pageId, 50);
+  const postId = cleanString(options.postId, 200);
+
+  const comments = Array.isArray(options.comments)
+    ? options.comments
+    : [];
+
+  if (!adminUid || !/^\d{5,30}$/.test(pageId) || !postId) {
+    throw new Error('Invalid comment sync context.');
+  }
+
+  const page = await getPageContext(pageId);
+
+  if (!page || page.adminUid !== adminUid) {
+    throw new Error('Facebook Page access denied.');
+  }
+
+  const now = new Date();
+  let synced = 0;
+
+  for (const item of comments) {
+    const commentId = cleanString(item.id, 200);
+
+    if (!commentId) continue;
+
+    const parentId = cleanString(item.parent_id, 200);
+
+    const author = item.from && typeof item.from === 'object'
+      ? item.from
+      : {};
+
+    const authorId = cleanString(author.id, 100);
+    const authorName = cleanString(author.name, 200);
+
+    const isReply = Boolean(parentId);
+    const isPageAuthor = authorId === pageId;
+
+    const ref = db
+      .collection(COMMENTS_COLLECTION)
+      .doc(makeDocumentId(`${pageId}:${commentId}`));
+
+    const snapshot = await ref.get();
+    const previous = snapshot.exists
+      ? snapshot.data() || {}
+      : {};
+
+    let replySource = previous.replySource || null;
+
+    if (
+      isReply &&
+      isPageAuthor &&
+      !['admin', 'ai'].includes(replySource)
+    ) {
+      replySource = 'page';
+    }
+
+    if (
+      isReply &&
+      !isPageAuthor &&
+      !replySource
+    ) {
+      replySource = null;
+    }
+
+    const commentCreatedAt =
+      toDate(item.created_time) ||
+      previous.commentCreatedAt ||
+      now;
+
+    await ref.set({
+      adminUid,
+      pageId,
+      pageName: page.pageName,
+      postId,
+
+      historyId: previous.historyId || '',
+      productId: previous.productId || '',
+      productName: previous.productName || '',
+      productSku: previous.productSku || '',
+      postUrl: previous.postUrl || '',
+
+      commentId,
+      parentId,
+      isReply,
+
+      message: cleanString(
+        item.message || previous.message,
+        10000
+      ),
+
+      authorId: authorId || previous.authorId || '',
+      authorName: authorName || previous.authorName || '',
+      authorType: isPageAuthor ? 'page' : 'customer',
+
+      replySource,
+
+      status: 'active',
+
+      commentCreatedAt,
+      lastEventAt: now,
+      updatedAt: now,
+
+      ...(snapshot.exists ? {} : {
+        createdAt: now
+      })
+    }, { merge: true });
+
+    synced += 1;
+  }
+
+  return {
+    synced,
+    pageId,
+    postId
+  };
+}
+// ========================================
+// Record Outgoing Admin Post Comment
+// ========================================
+
+async function recordOutgoingComment(options = {}) {
+  const adminUid = cleanString(options.adminUid, 128);
+  const pageId = cleanString(options.pageId, 50);
+  const postId = cleanString(options.postId, 200);
+  const commentId = cleanString(options.commentId, 200);
+  const message = cleanString(options.message, 10000);
+  const source = cleanString(options.source, 20).toLowerCase();
+
+  if (
+    !adminUid ||
+    !/^\d{5,30}$/.test(pageId) ||
+    !postId ||
+    !commentId ||
+    !message ||
+    source !== 'admin'
+  ) {
+    throw new Error('Invalid outgoing Page comment data.');
+  }
+
+  const page = await getPageContext(pageId);
+
+  if (!page || page.adminUid !== adminUid) {
+    throw new Error('Facebook Page access denied.');
+  }
+
+  const ref = db
+    .collection(COMMENTS_COLLECTION)
+    .doc(makeDocumentId(`${pageId}:${commentId}`));
+
+  const now = new Date();
+
+  await ref.set({
+    adminUid,
+    pageId,
+    pageName: page.pageName,
+    postId,
+
+    historyId: '',
+    productId: '',
+    productName: '',
+    productSku: '',
+    postUrl: '',
+
+    commentId,
+    parentId: '',
+    isReply: false,
+
+    message,
+
+    authorId: pageId,
+    authorName: page.pageName,
+    authorType: 'page',
+
+    replySource: 'admin',
+
+    status: 'active',
+
+    commentCreatedAt: now,
+    lastEventAt: now,
+    createdAt: now,
+    updatedAt: now
+  }, { merge: true });
+
+  return {
+    success: true,
+    commentId,
+    source: 'admin'
+  };
+}
+
+
 // ========================================
 // List Comment History
 // ========================================
@@ -601,5 +799,7 @@ async function listComments(adminUid, filters = {}) {
 module.exports = {
   processFeedChange,
   recordOutgoingReply,
+  recordOutgoingComment,
+  syncGraphComments,
   listComments
 };
