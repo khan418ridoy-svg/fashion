@@ -22,8 +22,6 @@ const {
 const MAX_DATE_RANGE_DAYS = 90;
 
 const PAGE_METRICS = [
-  'page_posts_impressions',
-  'page_posts_impressions_unique',
   'page_post_engagements',
   'page_media_view',
   'page_daily_follows_unique'
@@ -262,14 +260,6 @@ function summarizePageInsights(metrics) {
     metric => metric.name === name
   );
 
-  const impressions = findMetric(
-    'page_posts_impressions'
-  );
-
-  const reach = findMetric(
-    'page_posts_impressions_unique'
-  );
-
   const engagements = findMetric(
     'page_post_engagements'
   );
@@ -283,28 +273,20 @@ function summarizePageInsights(metrics) {
   );
 
   return {
-    impressions: getNumericTotal(impressions),
-
     engagements: getNumericTotal(engagements),
 
     mediaViews: getNumericTotal(mediaViews),
 
     follows: getNumericTotal(follows),
 
-    /*
-     * Do not sum daily unique reach.
-     * The same person may be counted on multiple days.
-     */
-
-    reachByDay: reach?.values || [],
+    reachByDay: [],
 
     reachTotal: null,
 
     reachNote:
-      'Daily unique reach is not summed because the same person may appear on multiple days.'
+      'Reach data is not currently included because the previous unique-impression metrics have been deprecated.'
   };
 }
-
 // ========================================
 // Get Page Insights
 // ========================================
