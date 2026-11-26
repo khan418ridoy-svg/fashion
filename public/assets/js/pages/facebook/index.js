@@ -26,6 +26,11 @@ import {
   bindFacebookCommentsEvents
 } from './comments.js';
 
+import {
+  renderFacebookInsights,
+  bindFacebookInsightsEvents
+} from './insights.js';
+
 // ========================================
 // Facebook Navigation
 // ========================================
@@ -50,7 +55,11 @@ const FACEBOOK_SECTIONS = [
   {
     id: 'comments',
     label: 'Comments & Replies'
-  }
+  },
+  {
+  id: 'insights',
+  label: 'Analytics'
+}
 ];
 
 // ========================================
@@ -222,6 +231,19 @@ export function renderFacebookPage() {
         ${renderFacebookComments()}
 
       </section>
+
+      <!-- Facebook Analytics -->
+
+<section
+  id="fb-section-insights"
+  class="fb-page-section fb-insights-section"
+  data-fb-section="insights"
+  hidden
+>
+
+  ${renderFacebookInsights()}
+
+</section>
 
     </div>
   `;
@@ -475,8 +497,12 @@ export function bindFacebookPageEvents(context) {
   // Facebook Customer Comments and Replies.
 
   bindFacebookCommentsEvents(root);
+  // Facebook Page and Post Insights.
+
+bindFacebookInsightsEvents(root);
 
   // Initial section.
 
   setActiveFacebookSection(root, 'dashboard');
 }
+
