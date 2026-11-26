@@ -207,6 +207,28 @@ export function renderFacebookDashboard() {
               aria-hidden="true">→</span>
           </button>
 
+<button
+  class="fb-dashboard-action"
+  type="button"
+  data-fb-dashboard-scroll="comments"
+>
+  <span class="fb-dashboard-action-icon">
+    <span aria-hidden="true">☷</span>
+  </span>
+
+  <span>
+    <strong>Comments & Replies</strong>
+    <small>
+      View customer comments and reply from the dashboard.
+    </small>
+  </span>
+
+  <span
+    class="fb-dashboard-action-arrow"
+    aria-hidden="true"
+  >→</span>
+</button>
+
           <button
             class="fb-dashboard-action"
             type="button"
@@ -258,7 +280,7 @@ export function renderFacebookDashboard() {
             </span>
           </article>
 
-          <article class="fb-dashboard-feature">
+       <article class="fb-dashboard-feature is-available">
             <span class="fb-dashboard-feature-icon">☷</span>
 
             <div>
@@ -269,9 +291,9 @@ export function renderFacebookDashboard() {
               </p>
             </div>
 
-            <span class="fb-dashboard-feature-status is-pending">
-              Coming soon
-            </span>
+           <span class="fb-dashboard-feature-status">
+  Available
+</span>
           </article>
 
           <article class="fb-dashboard-feature">
@@ -407,8 +429,8 @@ async function loadDashboardConnection(root) {
   if (token) {
     token.textContent = result.connection?.tokenExpiresAt
       ? `Token expiry: ${formatDate(
-          result.connection.tokenExpiresAt
-        )}`
+        result.connection.tokenExpiresAt
+      )}`
       : 'Connection is active.';
   }
 }
