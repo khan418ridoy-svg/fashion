@@ -377,6 +377,92 @@ export const facebookApi = {
     );
   },
 
+
+  /**
+   * Get Facebook Page Insights.
+   *
+   * Supported filters:
+   * pageId, since, until
+   */
+  async getPageInsights(filters = {}) {
+    const {
+      pageId,
+      since,
+      until
+    } = filters;
+
+    if (
+      typeof pageId !== 'string' ||
+      !pageId.trim()
+    ) {
+      throw new Error(
+        'Please select a Facebook Page.'
+      );
+    }
+
+    const query = new URLSearchParams();
+
+    query.set('pageId', pageId.trim());
+
+    if (since) {
+      query.set('since', since);
+    }
+
+    if (until) {
+      query.set('until', until);
+    }
+
+    return request(
+      `/insights/page?${query.toString()}`
+    );
+  },
+
+  /**
+   * Get Facebook Post Insights.
+   *
+   * Supported filters:
+   * pageId, postId
+   */
+  async getPostInsights(filters = {}) {
+    const {
+      pageId,
+      postId
+    } = filters;
+
+    if (
+      typeof pageId !== 'string' ||
+      !pageId.trim()
+    ) {
+      throw new Error(
+        'Please select a Facebook Page.'
+      );
+    }
+
+    if (
+      typeof postId !== 'string' ||
+      !postId.trim()
+    ) {
+      throw new Error(
+        'A valid Facebook Post ID is required.'
+      );
+    }
+
+    const query = new URLSearchParams();
+
+    query.set('pageId', pageId.trim());
+    query.set('postId', postId.trim());
+
+    return request(
+      `/insights/post?${query.toString()}`
+    );
+  },
+
+
+
+
+
+
+
   /**
    * Delete a Facebook post and its Firestore history.
    */
