@@ -587,8 +587,9 @@ export function bindFacebookDashboardEvents(root = document) {
 
       const selector = targetName === 'posts'
         ? '.fb-posts-section'
-        : '.fb-settings-layout';
-
+        : targetName === 'comments'
+          ? '.fb-comments-section'
+          : '.fb-settings-layout';
       const target = root.querySelector(selector);
 
       if (!target) return;
