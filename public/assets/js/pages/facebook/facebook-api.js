@@ -417,6 +417,82 @@ export const facebookApi = {
     );
   },
 
+    /**
+   * Get published posts from a selected Facebook Page.
+   */
+  async getPagePosts(filters = {}) {
+    const { pageId, limit = 20, after } = filters;
+
+    if (
+      typeof pageId !== 'string' ||
+      !pageId.trim()
+    ) {
+      throw new Error('Please select a Facebook Page.');
+    }
+
+    if (
+      !Number.isInteger(Number(limit)) ||
+      Number(limit) < 1 ||
+      Number(limit) > 50
+    ) {
+      throw new Error('Post limit must be between 1 and 50.');
+    }
+
+    const query = new URLSearchParams({
+      pageId: pageId.trim(),
+      limit: String(Number(limit))
+    });
+
+    if (after) {
+      query.set('after', after);
+    }
+
+    return request(`/posts/feed?${query.toString()}`);
+  },
+
+  /**
+   * Load Facebook comments and sync them to comment history.
+   */
+  async getPostComments(pageId, postId) {
+    if (!pageId || !postId) {
+      throw new Error('Page ID and Post ID are required.');
+    }
+
+    const query = new URLSearchParams({
+      pageId: pageId.trim()
+    });
+
+    return request(
+      `/posts/${encodeURIComponent(postId)}/comments?${query.toString()}`
+    );
+  },
+
+  /**
+   * Publish a top-level Admin Dashboard comment.
+   */
+  async commentOnPost(pageId, postId, message) {
+    if (!pageId || !postId) {
+      throw new Error('Page ID and Post ID are required.');
+    }
+
+    if (
+      typeof message !== 'string' ||
+      !message.trim()
+    ) {
+      throw new Error('Comment cannot be empty.');
+    }
+
+    return request(
+      `/posts/${encodeURIComponent(postId)}/comments`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          pageId: pageId.trim(),
+          message: message.trim()
+        })
+      }
+    );
+  },
   /**
    * Get Facebook Post Insights.
    *
