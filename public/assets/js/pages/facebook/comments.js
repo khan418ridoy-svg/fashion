@@ -91,16 +91,18 @@ function setFeedback(root, message, type = '') {
 // ========================================
 
 
-function getCommentFilters(root) {
+function getCommentFilters(root, state = {}) {
   return {
-    pageId: root.querySelector(
-      '[data-fb-comments-page]'
-    )?.value || '',
+    pageId: state.selectedPageId ||
+      root.querySelector('[data-fb-comments-page]')?.value || '',
+
+    postId: state.selectedPostId || '',
 
     status: root.querySelector(
       '[data-fb-comments-status]'
-    )?.value || 'active',
+    )?.value || '',
 
+    includeReplies: true,
     limit: 500
   };
 }
@@ -164,6 +166,208 @@ async function loadCommentPages(root, state) {
   }
 }
 
+
+// ========================================
+// Page Posts Feed
+// ========================================
+
+function renderPagePost(post, page) {
+  return `
+    <article class="fb-comment-card fb-post-feed-card">
+
+      <header class="fb-comment-card-header">
+        <strong>${escapeHtml(page.pageName || 'Facebook Page')}</strong>
+        <span class="fb-muted">
+          ${escapeHtml(formatDate(post.createdTime))}
+        </span>
+      </header>
+
+      ${post.fullPicture ? `
+        <img
+          src="${escapeHtml(post.fullPicture)}"
+          alt="Facebook post"
+          loading="lazy"
+          style="width:100%;max-height:260px;object-fit:contain;border-radius:10px;"
+        >
+      ` : ''}
+
+      <p class="fb-comment-message">
+        ${escapeHtml(post.message || 'No text in this post.')}
+      </p>
+
+      <div class="fb-comment-meta">
+        <div>
+          <span>Comments</span>
+          <strong>${Number(post.comments) || 0}</strong>
+        </div>
+
+        <div>
+          <span>Reactions</span>
+          <strong>${Number(post.reactions) || 0}</strong>
+        </div>
+
+        <div>
+          <span>Shares</span>
+          <strong>${Number(post.shares) || 0}</strong>
+        </div>
+      </div>
+
+      <div class="fb-form-actions">
+        <button
+          type="button"
+          class="fb-button fb-button-primary"
+          data-fb-comment-post-open="${escapeHtml(post.id)}"
+          data-fb-comment-post-page="${escapeHtml(page.pageId)}"
+        >
+          View Comments & Reply
+        </button>
+
+        ${post.permalinkUrl ? `
+          <a
+            class="fb-button"
+            href="${escapeHtml(post.permalinkUrl)}"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open Facebook Post
+          </a>
+        ` : ''}
+      </div>
+
+    </article>
+  `;
+}
+
+async function loadPagePosts(root, state) {
+  if (state.postsLoading) return;
+
+  const selectedPageId = root.querySelector(
+    '[data-fb-comments-page]'
+  )?.value || '';
+
+  const pages = selectedPageId
+    ? state.pages.filter(page => page.pageId === selectedPageId)
+    : state.pages;
+
+  if (!pages.length) {
+    setFeedback(root, 'No selected Facebook Pages found.', 'error');
+    return;
+  }
+
+  const button = root.querySelector('[data-fb-posts-refresh]');
+
+  state.postsLoading = true;
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Loading Posts...';
+  }
+
+  const container = root.querySelector('[data-fb-page-posts]');
+
+  container.innerHTML = '<p class="fb-muted">Loading Facebook posts...</p>';
+
+  try {
+    const allPosts = [];
+
+    for (const page of pages) {
+      const result = await facebookApi.getPagePosts({
+        pageId: page.pageId,
+        limit: 20
+      });
+
+      const posts = Array.isArray(result?.posts)
+        ? result.posts
+        : [];
+
+      allPosts.push(
+        ...posts.map(post => ({
+          ...post,
+          pageId: page.pageId,
+          pageName: page.pageName || 'Facebook Page'
+        }))
+      );
+    }
+
+    state.posts = allPosts;
+
+    if (!allPosts.length) {
+      container.innerHTML = `
+        <div class="fb-empty-state">
+          <h3>No Facebook Posts Found</h3>
+          <p>This Page has no available posts.</p>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = allPosts.map(post => {
+      const page = {
+        pageId: post.pageId,
+        pageName: post.pageName
+      };
+
+      return renderPagePost(post, page);
+    }).join('');
+
+    setFeedback(
+      root,
+      `${allPosts.length} recent post(s) loaded. Select a post to view its comments.`,
+      'success'
+    );
+
+  } finally {
+    state.postsLoading = false;
+
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Refresh Page Posts';
+    }
+  }
+}
+
+async function openPostComments(root, state, pageId, postId) {
+  const post = state.posts.find(item => (
+    item.id === postId &&
+    item.pageId === pageId
+  ));
+
+  if (!post) {
+    throw new Error('Selected Facebook post was not found.');
+  }
+
+  state.selectedPageId = pageId;
+  state.selectedPostId = postId;
+
+  const pageSelect = root.querySelector(
+    '[data-fb-comments-page]'
+  );
+
+  if (pageSelect) {
+    pageSelect.value = pageId;
+  }
+
+  setFeedback(
+    root,
+    'Loading this post comments and replies from Facebook...'
+  );
+
+  await facebookApi.getPostComments(pageId, postId);
+
+  await loadComments(root, state);
+
+  setFeedback(
+    root,
+    'Post comments and replies synced successfully. You can reply below.',
+    'success'
+  );
+
+  root.querySelector('[data-fb-comments-list]')
+    ?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start'
+    });
+}
 // ========================================
 // Group Replies
 // ========================================
@@ -230,8 +434,8 @@ function renderReply(reply) {
 
         <time>
           ${escapeHtml(formatDate(
-            reply.commentCreatedAt || reply.createdAt
-          ))}
+    reply.commentCreatedAt || reply.createdAt
+  ))}
         </time>
 
       </div>
@@ -354,15 +558,15 @@ function renderCommentCard(comment) {
 
           <span class="fb-muted">
             ${escapeHtml(formatDate(
-              comment.commentCreatedAt
-            ))}
+    comment.commentCreatedAt
+  ))}
           </span>
 
         </div>
 
         <span class="fb-comment-status ${isDeleted
-          ? 'is-deleted'
-          : 'is-active'}">
+      ? 'is-deleted'
+      : 'is-active'}">
           ${isDeleted ? 'Deleted' : 'Active'}
         </span>
 
@@ -542,8 +746,9 @@ async function loadComments(root, state) {
 
   try {
     const result = await facebookApi.getComments(
-      getCommentFilters(root)
+      getCommentFilters(root, state)
     );
+
 
     state.comments = Array.isArray(result?.comments)
       ? result.comments
@@ -823,6 +1028,40 @@ export function renderFacebookComments() {
 
       </article>
 
+<!-- Facebook Page Posts -->
+
+<article class="fb-card fb-post-feed-section">
+
+  <header class="fb-card-heading">
+    <div>
+      <h3>Facebook Page Posts</h3>
+      <p class="fb-muted">
+        Select a post to load its customer comments and replies.
+      </p>
+    </div>
+  </header>
+
+  <div class="fb-form-actions">
+    <button
+      type="button"
+      class="fb-button fb-button-primary"
+      data-fb-posts-refresh
+    >
+      Load Recent Posts
+    </button>
+  </div>
+
+  <div
+    class="fb-post-feed-list"
+    data-fb-page-posts
+  >
+    <p class="fb-muted">
+      Click Load Recent Posts to see your Facebook Page posts.
+    </p>
+  </div>
+
+</article>
+
       <div
         class="fb-comments-list"
         data-fb-comments-list
@@ -853,11 +1092,15 @@ export function renderFacebookComments() {
 
 export function bindFacebookCommentsEvents(root = document) {
   const state = {
-    comments: [],
-    pages: [],
-    loading: false,
-    replying: false
-  };
+  comments: [],
+  pages: [],
+  posts: [],
+  selectedPageId: '',
+  selectedPostId: '',
+  loading: false,
+  replying: false,
+  postsLoading: false
+};
 
   // Refresh comments.
 
@@ -875,6 +1118,76 @@ export function bindFacebookCommentsEvents(root = document) {
       loadComments(root, state);
     });
   }
+
+
+  // Load Facebook Page Posts.
+
+const postsRefreshButton = root.querySelector(
+  '[data-fb-posts-refresh]'
+);
+
+if (
+  postsRefreshButton &&
+  !postsRefreshButton.dataset.bound
+) {
+  postsRefreshButton.dataset.bound = 'true';
+
+  postsRefreshButton.addEventListener('click', () => {
+    loadPagePosts(root, state).catch(error => {
+      console.error('[FACEBOOK POSTS]', error);
+
+      setFeedback(
+        root,
+        error.message || 'Failed to load Facebook posts.',
+        'error'
+      );
+    });
+  });
+}
+
+// Select a post and sync its comments.
+
+const postsContainer = root.querySelector(
+  '[data-fb-page-posts]'
+);
+
+if (postsContainer && !postsContainer.dataset.bound) {
+  postsContainer.dataset.bound = 'true';
+
+  postsContainer.addEventListener('click', async event => {
+    const button = event.target.closest(
+      '[data-fb-comment-post-open]'
+    );
+
+    if (!button) return;
+
+    const pageId = button.dataset.fbCommentPostPage;
+    const postId = button.dataset.fbCommentPostOpen;
+
+    button.disabled = true;
+    button.textContent = 'Loading Comments...';
+
+    try {
+      await openPostComments(
+        root,
+        state,
+        pageId,
+        postId
+      );
+    } catch (error) {
+      console.error('[FACEBOOK POST COMMENTS]', error);
+
+      setFeedback(
+        root,
+        error.message || 'Failed to load post comments.',
+        'error'
+      );
+    } finally {
+      button.disabled = false;
+      button.textContent = 'View Comments & Reply';
+    }
+  });
+}
 
   // Apply filters.
 
@@ -927,6 +1240,21 @@ export function bindFacebookCommentsEvents(root = document) {
     });
   }
 
+
+  const pageFilter = root.querySelector(
+  '[data-fb-comments-page]'
+);
+
+if (pageFilter && !pageFilter.dataset.postFilterBound) {
+  pageFilter.dataset.postFilterBound = 'true';
+
+  pageFilter.addEventListener('change', () => {
+    state.selectedPageId = '';
+    state.selectedPostId = '';
+
+    loadComments(root, state);
+  });
+}
   // Load selected Pages and initial comments.
 
   loadCommentPages(root, state).then(() => {
