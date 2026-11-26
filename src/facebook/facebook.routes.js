@@ -387,17 +387,21 @@ router.get('/posts/:postId/comments', async (req, res) => {
     const pageId = cleanString(req.query.pageId, 50);
     const postId = cleanString(req.params.postId, 200);
 
-    await getPostComments(adminUid, pageId, postId);
+    const syncResult = await getPostComments(
+      adminUid,
+      pageId,
+      postId
+    );
 
     const result = await listComments(adminUid, {
       pageId,
       postId,
-      includeReplies: true,
       limit: 500
     });
 
     return res.json({
       success: true,
+      syncResult,
       ...result
     });
   } catch (error) {
