@@ -326,6 +326,123 @@ async function loadPagePosts(root, state) {
   }
 }
 
+
+// ========================================
+// Sync Recent Facebook Post Comments
+// ========================================
+
+async function syncRecentPageComments(root, state) {
+  if (state.syncing) return;
+
+  const selectedPageId = root.querySelector(
+    '[data-fb-comments-page]'
+  )?.value || '';
+
+  const pages = selectedPageId
+    ? state.pages.filter(page => page.pageId === selectedPageId)
+    : state.pages;
+
+  if (!pages.length) {
+    setFeedback(
+      root,
+      'No selected Facebook Pages found.',
+      'error'
+    );
+    return;
+  }
+
+  state.syncing = true;
+
+  const button = root.querySelector(
+    '[data-fb-comments-refresh]'
+  );
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Syncing Facebook...';
+  }
+
+  let syncedPosts = 0;
+  let failedPosts = 0;
+
+  try {
+    for (const page of pages) {
+      setFeedback(
+        root,
+        `Loading recent posts from ${page.pageName || 'Facebook Page'}...`
+      );
+
+      const feed = await facebookApi.getPagePosts({
+        pageId: page.pageId,
+        limit: 20
+      });
+
+      const posts = Array.isArray(feed?.posts)
+        ? feed.posts
+        : [];
+
+      for (const post of posts) {
+        if (!post.id) continue;
+
+        try {
+          await facebookApi.getPostComments(
+            page.pageId,
+            post.id
+          );
+
+          syncedPosts += 1;
+
+        } catch (error) {
+          failedPosts += 1;
+
+          console.error(
+            '[FACEBOOK COMMENT SYNC] Post failed:',
+            post.id,
+            error
+          );
+        }
+      }
+    }
+
+    await loadComments(root, state);
+
+    if (failedPosts > 0) {
+      setFeedback(
+        root,
+        `Synced ${syncedPosts} post(s). ${failedPosts} post(s) could not be synced. Check console for details.`,
+        'error'
+      );
+    } else {
+      setFeedback(
+        root,
+        `Successfully synced comments and replies from ${syncedPosts} recent post(s).`,
+        'success'
+      );
+    }
+
+  } catch (error) {
+    console.error(
+      '[FACEBOOK COMMENT SYNC]',
+      error
+    );
+
+    setFeedback(
+      root,
+      error.message || 'Failed to sync Facebook comments.',
+      'error'
+    );
+
+  } finally {
+    state.syncing = false;
+
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Refresh Comments';
+    }
+  }
+}
+
+
 async function openPostComments(root, state, pageId, postId) {
   const post = state.posts.find(item => (
     item.id === postId &&
@@ -1092,15 +1209,16 @@ export function renderFacebookComments() {
 
 export function bindFacebookCommentsEvents(root = document) {
   const state = {
-  comments: [],
-  pages: [],
-  posts: [],
-  selectedPageId: '',
-  selectedPostId: '',
-  loading: false,
-  replying: false,
-  postsLoading: false
-};
+    comments: [],
+    pages: [],
+    posts: [],
+    selectedPageId: '',
+    selectedPostId: '',
+    loading: false,
+    replying: false,
+    postsLoading: false,
+    syncing: false
+  };
 
   // Refresh comments.
 
@@ -1114,80 +1232,80 @@ export function bindFacebookCommentsEvents(root = document) {
   ) {
     refreshButton.dataset.bound = 'true';
 
-    refreshButton.addEventListener('click', () => {
-      loadComments(root, state);
-    });
+   refreshButton.addEventListener('click', () => {
+  syncRecentPageComments(root, state);
+});
   }
 
 
   // Load Facebook Page Posts.
 
-const postsRefreshButton = root.querySelector(
-  '[data-fb-posts-refresh]'
-);
+  const postsRefreshButton = root.querySelector(
+    '[data-fb-posts-refresh]'
+  );
 
-if (
-  postsRefreshButton &&
-  !postsRefreshButton.dataset.bound
-) {
-  postsRefreshButton.dataset.bound = 'true';
+  if (
+    postsRefreshButton &&
+    !postsRefreshButton.dataset.bound
+  ) {
+    postsRefreshButton.dataset.bound = 'true';
 
-  postsRefreshButton.addEventListener('click', () => {
-    loadPagePosts(root, state).catch(error => {
-      console.error('[FACEBOOK POSTS]', error);
+    postsRefreshButton.addEventListener('click', () => {
+      loadPagePosts(root, state).catch(error => {
+        console.error('[FACEBOOK POSTS]', error);
 
-      setFeedback(
-        root,
-        error.message || 'Failed to load Facebook posts.',
-        'error'
-      );
+        setFeedback(
+          root,
+          error.message || 'Failed to load Facebook posts.',
+          'error'
+        );
+      });
     });
-  });
-}
+  }
 
-// Select a post and sync its comments.
+  // Select a post and sync its comments.
 
-const postsContainer = root.querySelector(
-  '[data-fb-page-posts]'
-);
+  const postsContainer = root.querySelector(
+    '[data-fb-page-posts]'
+  );
 
-if (postsContainer && !postsContainer.dataset.bound) {
-  postsContainer.dataset.bound = 'true';
+  if (postsContainer && !postsContainer.dataset.bound) {
+    postsContainer.dataset.bound = 'true';
 
-  postsContainer.addEventListener('click', async event => {
-    const button = event.target.closest(
-      '[data-fb-comment-post-open]'
-    );
-
-    if (!button) return;
-
-    const pageId = button.dataset.fbCommentPostPage;
-    const postId = button.dataset.fbCommentPostOpen;
-
-    button.disabled = true;
-    button.textContent = 'Loading Comments...';
-
-    try {
-      await openPostComments(
-        root,
-        state,
-        pageId,
-        postId
+    postsContainer.addEventListener('click', async event => {
+      const button = event.target.closest(
+        '[data-fb-comment-post-open]'
       );
-    } catch (error) {
-      console.error('[FACEBOOK POST COMMENTS]', error);
 
-      setFeedback(
-        root,
-        error.message || 'Failed to load post comments.',
-        'error'
-      );
-    } finally {
-      button.disabled = false;
-      button.textContent = 'View Comments & Reply';
-    }
-  });
-}
+      if (!button) return;
+
+      const pageId = button.dataset.fbCommentPostPage;
+      const postId = button.dataset.fbCommentPostOpen;
+
+      button.disabled = true;
+      button.textContent = 'Loading Comments...';
+
+      try {
+        await openPostComments(
+          root,
+          state,
+          pageId,
+          postId
+        );
+      } catch (error) {
+        console.error('[FACEBOOK POST COMMENTS]', error);
+
+        setFeedback(
+          root,
+          error.message || 'Failed to load post comments.',
+          'error'
+        );
+      } finally {
+        button.disabled = false;
+        button.textContent = 'View Comments & Reply';
+      }
+    });
+  }
 
   // Apply filters.
 
@@ -1242,19 +1360,19 @@ if (postsContainer && !postsContainer.dataset.bound) {
 
 
   const pageFilter = root.querySelector(
-  '[data-fb-comments-page]'
-);
+    '[data-fb-comments-page]'
+  );
 
-if (pageFilter && !pageFilter.dataset.postFilterBound) {
-  pageFilter.dataset.postFilterBound = 'true';
+  if (pageFilter && !pageFilter.dataset.postFilterBound) {
+    pageFilter.dataset.postFilterBound = 'true';
 
-  pageFilter.addEventListener('change', () => {
-    state.selectedPageId = '';
-    state.selectedPostId = '';
+    pageFilter.addEventListener('change', () => {
+      state.selectedPageId = '';
+      state.selectedPostId = '';
 
-    loadComments(root, state);
-  });
-}
+      loadComments(root, state);
+    });
+  }
   // Load selected Pages and initial comments.
 
   loadCommentPages(root, state).then(() => {
