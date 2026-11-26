@@ -102,7 +102,6 @@ function getCommentFilters(root, state = {}) {
       '[data-fb-comments-status]'
     )?.value || '',
 
-    includeReplies: true,
     limit: 500
   };
 }
