@@ -45,6 +45,12 @@ const {
 
 const router = express.Router();
 
+const {
+  getPageInsights,
+  getPostInsights
+} = require('./facebook.insights.service');
+
+
 // ========================================
 // Firestore Configuration
 // ========================================
@@ -398,10 +404,90 @@ router.post('/comments/:commentId/reply', async (req, res) => {
   }
 });
 
+
+/**
+ * Get Facebook Page Insights
+ * GET /api/facebook/insights/page
+ */
+router.get('/insights/page', async (req, res) => {
+  try {
+    const adminUid = requireAdminUid(req);
+
+    const pageId = cleanString(
+      req.query.pageId,
+      50
+    );
+
+    const since = cleanString(
+      req.query.since,
+      50
+    );
+
+    const until = cleanString(
+      req.query.until,
+      50
+    );
+
+    const result = await getPageInsights(
+      adminUid,
+      pageId,
+      {
+        since,
+        until
+      }
+    );
+
+    return res.json({
+      success: true,
+      ...result
+    });
+
+  } catch (error) {
+    return sendError(res, error);
+  }
+});
+
+/**
+ * Get Facebook Post Insights
+ * GET /api/facebook/insights/post
+ */
+router.get('/insights/post', async (req, res) => {
+  try {
+    const adminUid = requireAdminUid(req);
+
+    const pageId = cleanString(
+      req.query.pageId,
+      50
+    );
+
+    const postId = cleanString(
+      req.query.postId,
+      100
+    );
+
+    const result = await getPostInsights(
+      adminUid,
+      pageId,
+      postId
+    );
+
+    return res.json({
+      success: true,
+      ...result
+    });
+
+  } catch (error) {
+    return sendError(res, error);
+  }
+});
+
+
+
 // ========================================
 // Start Facebook OAuth
 // GET /api/facebook/oauth/start
 // ========================================
+
 
 router.get('/oauth/start', async (req, res) => {
   try {
