@@ -79,10 +79,6 @@ function setLoading(root, loading) {
 function renderPageMetrics() {
   const cards = [
     {
-      key: 'impressions',
-      label: 'Impressions'
-    },
-    {
       key: 'engagements',
       label: 'Engagements'
     },
@@ -110,7 +106,6 @@ function renderPageMetrics() {
     </article>
   `).join('');
 }
-
 // ========================================
 // Render Insights
 // ========================================
