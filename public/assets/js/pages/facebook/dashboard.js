@@ -1,4 +1,3 @@
-
 'use strict';
 
 import { facebookApi } from './facebook-api.js';
@@ -29,6 +28,7 @@ function setStatus(element, text, type = '') {
   if (!element) return;
 
   element.textContent = text;
+
   element.classList.remove(
     'is-connected',
     'is-disconnected',
@@ -203,31 +203,33 @@ export function renderFacebookDashboard() {
               </small>
             </span>
 
-            <span class="fb-dashboard-action-arrow"
-              aria-hidden="true">→</span>
+            <span
+              class="fb-dashboard-action-arrow"
+              aria-hidden="true"
+            >→</span>
           </button>
 
-<button
-  class="fb-dashboard-action"
-  type="button"
-  data-fb-dashboard-scroll="comments"
->
-  <span class="fb-dashboard-action-icon">
-    <span aria-hidden="true">☷</span>
-  </span>
+          <button
+            class="fb-dashboard-action"
+            type="button"
+            data-fb-dashboard-scroll="comments"
+          >
+            <span class="fb-dashboard-action-icon">
+              <span aria-hidden="true">☷</span>
+            </span>
 
-  <span>
-    <strong>Comments & Replies</strong>
-    <small>
-      View customer comments and reply from the dashboard.
-    </small>
-  </span>
+            <span>
+              <strong>Comments & Replies</strong>
+              <small>
+                View customer comments and reply from the dashboard.
+              </small>
+            </span>
 
-  <span
-    class="fb-dashboard-action-arrow"
-    aria-hidden="true"
-  >→</span>
-</button>
+            <span
+              class="fb-dashboard-action-arrow"
+              aria-hidden="true"
+            >→</span>
+          </button>
 
           <button
             class="fb-dashboard-action"
@@ -245,8 +247,10 @@ export function renderFacebookDashboard() {
               </small>
             </span>
 
-            <span class="fb-dashboard-action-arrow"
-              aria-hidden="true">→</span>
+            <span
+              class="fb-dashboard-action-arrow"
+              aria-hidden="true"
+            >→</span>
           </button>
 
         </div>
@@ -280,7 +284,7 @@ export function renderFacebookDashboard() {
             </span>
           </article>
 
-       <article class="fb-dashboard-feature is-available">
+          <article class="fb-dashboard-feature is-available">
             <span class="fb-dashboard-feature-icon">☷</span>
 
             <div>
@@ -291,9 +295,9 @@ export function renderFacebookDashboard() {
               </p>
             </div>
 
-           <span class="fb-dashboard-feature-status">
-  Available
-</span>
+            <span class="fb-dashboard-feature-status">
+              Available
+            </span>
           </article>
 
           <article class="fb-dashboard-feature">
@@ -588,8 +592,9 @@ export function bindFacebookDashboardEvents(root = document) {
       const selector = targetName === 'posts'
         ? '.fb-posts-section'
         : targetName === 'comments'
-          ? '.fb-comments-section'
+          ? '.fb-comments-layout, .fb-comments-section'
           : '.fb-settings-layout';
+
       const target = root.querySelector(selector);
 
       if (!target) return;
