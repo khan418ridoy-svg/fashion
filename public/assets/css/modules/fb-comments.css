@@ -1,0 +1,363 @@
+
+/* =====================================================
+   Facebook: Comments & Replies
+   ===================================================== */
+
+.fb-comments-layout {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+/* ---------- Comment count ---------- */
+
+.fb-comment-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 13px;
+  border: 1px solid var(--fb-border);
+  border-radius: 999px;
+  background: var(--fb-blue-soft);
+  color: var(--fb-blue-dark);
+  font-size: .8rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+/* ---------- Filters ---------- */
+
+.fb-comment-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.fb-comment-filter-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fb-comment-filter-field label {
+  color: var(--fb-muted);
+  font-size: .85rem;
+  font-weight: 700;
+}
+
+.fb-comment-filter-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--fb-border);
+  border-radius: 9px;
+  background: var(--fb-surface);
+  color: var(--fb-text);
+  font: inherit;
+}
+
+.fb-comment-filter-field select:focus,
+.fb-comment-reply-form textarea:focus {
+  outline: 2px solid var(--fb-blue);
+  outline-offset: 2px;
+}
+
+/* ---------- Comment list ---------- */
+
+.fb-comments-list {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.fb-comment-card {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--fb-border);
+  border-radius: 14px;
+  background: var(--fb-surface);
+  overflow-wrap: anywhere;
+}
+
+.fb-comment-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--fb-border);
+}
+
+.fb-comment-author {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.fb-comment-author strong {
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.fb-comment-author .fb-muted {
+  font-size: .78rem;
+}
+
+/* ---------- Comment status ---------- */
+
+.fb-comment-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border: 1px solid var(--fb-border);
+  border-radius: 999px;
+  font-size: .72rem;
+  font-weight: 750;
+}
+
+.fb-comment-status.is-active {
+  border-color: #9bd8b8;
+  background: #effaf4;
+  color: var(--fb-green);
+}
+
+.fb-comment-status.is-deleted {
+  border-color: #f2b8b5;
+  background: #fef3f2;
+  color: var(--fb-red);
+}
+
+/* ---------- Page, product and post metadata ---------- */
+
+.fb-comment-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.fb-comment-meta > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--fb-border);
+  border-radius: 10px;
+  background: var(--fb-soft);
+}
+
+.fb-comment-meta > div > span {
+  color: var(--fb-muted);
+  font-size: .72rem;
+  font-weight: 650;
+}
+
+.fb-comment-meta strong,
+.fb-comment-meta code {
+  min-width: 0;
+  font-size: .85rem;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Customer comment ---------- */
+
+.fb-comment-original {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-left: 3px solid var(--fb-blue);
+  border-radius: 8px;
+  background: var(--fb-blue-soft);
+}
+
+.fb-comment-original h4,
+.fb-comment-replies h4 {
+  margin: 0;
+  font-size: .9rem;
+}
+
+.fb-comment-message {
+  margin: 0;
+  color: var(--fb-text);
+  font-size: .9rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Reply history ---------- */
+
+.fb-comment-replies {
+  display: grid;
+  gap: 12px;
+}
+
+.fb-comment-reply {
+  display: grid;
+  gap: 10px;
+  padding: 15px;
+  border: 1px solid var(--fb-border);
+  border-radius: 10px;
+  background: var(--fb-soft);
+}
+
+.fb-comment-reply-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+}
+
+.fb-comment-reply-header strong {
+  font-size: .85rem;
+}
+
+.fb-comment-reply-header time {
+  color: var(--fb-muted);
+  font-size: .72rem;
+}
+
+/* ---------- Reply source labels ---------- */
+
+.fb-comment-source {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 9px;
+  border: 1px solid var(--fb-border);
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 800;
+}
+
+.fb-comment-source-ai {
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.fb-comment-source-admin {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.fb-comment-source-page {
+  border-color: #9bd8b8;
+  background: #effaf4;
+  color: var(--fb-green);
+}
+
+.fb-comment-source-unknown {
+  background: var(--fb-soft);
+  color: var(--fb-muted);
+}
+
+/* ---------- No reply yet ---------- */
+
+.fb-comment-no-reply {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--fb-border);
+  border-radius: 9px;
+  color: var(--fb-muted);
+  font-size: .82rem;
+}
+
+/* ---------- Related Facebook post ---------- */
+
+.fb-comment-post-link a {
+  color: var(--fb-blue);
+  font-size: .85rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.fb-comment-post-link a:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Admin reply form ---------- */
+
+.fb-comment-reply-form {
+  display: grid;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--fb-border);
+}
+
+.fb-comment-reply-form label {
+  font-size: .85rem;
+  font-weight: 750;
+}
+
+.fb-comment-reply-form textarea {
+  width: 100%;
+  min-height: 90px;
+  padding: 12px;
+  border: 1px solid var(--fb-border);
+  border-radius: 9px;
+  background: var(--fb-surface);
+  color: var(--fb-text);
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.fb-comment-reply-form textarea:disabled {
+  opacity: .65;
+  cursor: not-allowed;
+}
+
+.fb-comment-reply-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ---------- More records notice ---------- */
+
+.fb-comments-more {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--fb-border);
+  border-radius: 9px;
+  color: var(--fb-muted);
+  font-size: .82rem;
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 700px) {
+  .fb-comment-filters,
+  .fb-comment-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .fb-comment-card {
+    padding: 15px;
+  }
+
+  .fb-comment-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .fb-comment-count {
+    white-space: normal;
+  }
+}
+
+@media (max-width: 480px) {
+  .fb-comment-reply-actions {
+    justify-content: stretch;
+  }
+
+  .fb-comment-reply-actions .fb-button {
+    width: 100%;
+  }
+}
