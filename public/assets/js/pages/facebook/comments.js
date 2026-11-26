@@ -1,4 +1,3 @@
-
 'use strict';
 
 import { facebookApi } from './facebook-api.js';
@@ -90,7 +89,6 @@ function setFeedback(root, message, type = '') {
 // Filters
 // ========================================
 
-
 function getCommentFilters(root, state = {}) {
   return {
     pageId: state.selectedPageId ||
@@ -165,20 +163,47 @@ async function loadCommentPages(root, state) {
   }
 }
 
-
 // ========================================
 // Page Posts Feed
 // ========================================
 
-function renderPagePost(post, page) {
-  return `
-    <article class="fb-comment-card fb-post-feed-card">
+function extractProductSku(post) {
+  const direct = String(
+    post?.productSku ||
+    post?.sku ||
+    ''
+  ).trim();
 
+  if (direct && direct.toUpperCase() !== 'N/A') {
+    return direct;
+  }
+
+  const caption = String(
+    post?.message ||
+    post?.caption ||
+    post?.description ||
+    ''
+  );
+
+  const match = caption.match(
+    /(?:Product\s*SKU|Product\s*Code|SKU)\s*:\s*([A-Z0-9][A-Z0-9._-]*)/i
+  );
+
+  return match?.[1] || 'N/A';
+}
+
+function renderPagePost(post, page) {
+  const postId = String(post.id || '');
+  const sku = extractProductSku(post);
+
+  return `
+    <article
+      class="fb-comment-card fb-post-feed-card"
+      data-fb-post-card="${escapeHtml(postId)}"
+    >
       <header class="fb-comment-card-header">
         <strong>${escapeHtml(page.pageName || 'Facebook Page')}</strong>
-        <span class="fb-muted">
-          ${escapeHtml(formatDate(post.createdTime))}
-        </span>
+        <span class="fb-muted">${escapeHtml(formatDate(post.createdTime))}</span>
       </header>
 
       ${post.fullPicture ? `
@@ -196,15 +221,17 @@ function renderPagePost(post, page) {
 
       <div class="fb-comment-meta">
         <div>
+          <span>Product SKU</span>
+          <strong>${escapeHtml(sku)}</strong>
+        </div>
+        <div>
           <span>Comments</span>
           <strong>${Number(post.comments) || 0}</strong>
         </div>
-
         <div>
           <span>Reactions</span>
           <strong>${Number(post.reactions) || 0}</strong>
         </div>
-
         <div>
           <span>Shares</span>
           <strong>${Number(post.shares) || 0}</strong>
@@ -215,8 +242,9 @@ function renderPagePost(post, page) {
         <button
           type="button"
           class="fb-button fb-button-primary"
-          data-fb-comment-post-open="${escapeHtml(post.id)}"
+          data-fb-comment-post-open="${escapeHtml(postId)}"
           data-fb-comment-post-page="${escapeHtml(page.pageId)}"
+          aria-expanded="false"
         >
           View Comments & Reply
         </button>
@@ -233,6 +261,19 @@ function renderPagePost(post, page) {
         ` : ''}
       </div>
 
+      <section
+        class="fb-post-comments-inline"
+        data-fb-post-comments="${escapeHtml(postId)}"
+        hidden
+      >
+        <div class="fb-post-comments-heading">
+          <h4>Comments & Replies</h4>
+          <span class="fb-muted">Facebook thread</span>
+        </div>
+        <div class="fb-post-comments-content">
+          <p class="fb-muted">Open comments to load this post's discussion.</p>
+        </div>
+      </section>
     </article>
   `;
 }
@@ -325,7 +366,6 @@ async function loadPagePosts(root, state) {
   }
 }
 
-
 // ========================================
 // Sync Recent Facebook Post Comments
 // ========================================
@@ -349,6 +389,10 @@ async function syncRecentPageComments(root, state) {
     );
     return;
   }
+
+  // Refresh button syncs all recent posts for the selected page scope.
+  state.selectedPageId = selectedPageId;
+  state.selectedPostId = '';
 
   state.syncing = true;
 
@@ -441,11 +485,14 @@ async function syncRecentPageComments(root, state) {
   }
 }
 
+// ========================================
+// Open Selected Post Comments
+// ========================================
 
 async function openPostComments(root, state, pageId, postId) {
   const post = state.posts.find(item => (
-    item.id === postId &&
-    item.pageId === pageId
+    String(item.id) === String(postId) &&
+    String(item.pageId) === String(pageId)
   ));
 
   if (!post) {
@@ -459,8 +506,25 @@ async function openPostComments(root, state, pageId, postId) {
     '[data-fb-comments-page]'
   );
 
-  if (pageSelect) {
-    pageSelect.value = pageId;
+  if (pageSelect) pageSelect.value = pageId;
+
+  const postCard = root.querySelector(
+    `[data-fb-post-card="${CSS.escape(String(postId))}"]`
+  );
+
+  const inlineSection = postCard?.querySelector(
+    `[data-fb-post-comments="${CSS.escape(String(postId))}"]`
+  );
+
+  const inlineContent = inlineSection?.querySelector(
+    '.fb-post-comments-content'
+  );
+
+  if (inlineSection) inlineSection.hidden = false;
+
+  if (inlineContent) {
+    inlineContent.innerHTML =
+      '<p class="fb-muted">Loading Facebook comments and replies...</p>';
   }
 
   setFeedback(
@@ -469,63 +533,82 @@ async function openPostComments(root, state, pageId, postId) {
   );
 
   await facebookApi.getPostComments(pageId, postId);
-
   await loadComments(root, state);
+
+  if (inlineContent && !state.comments.some(comment =>
+    String(comment.postId) === String(postId) &&
+    comment.isReply !== true
+  )) {
+    inlineContent.innerHTML = `
+      <div class="fb-empty-state">
+        <p>No comments found for this post.</p>
+      </div>
+    `;
+  }
 
   setFeedback(
     root,
-    'Post comments and replies synced successfully. You can reply below.',
+    'Post comments and replies synced successfully.',
     'success'
   );
-
-  root.querySelector('[data-fb-comments-list]')
-    ?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start'
-    });
 }
+
 // ========================================
 // Group Replies
 // ========================================
 
 function groupComments(comments) {
-  const parents = comments.filter(
-    comment => comment.isReply !== true
-  );
+  const records = Array.isArray(comments) ? comments : [];
+  const byId = new Map();
+  const children = new Map();
 
-  const replies = comments.filter(
-    comment => comment.isReply === true
-  );
-
-  const replyMap = new Map();
-
-  replies.forEach(reply => {
-    const parentId = String(reply.parentId || '');
-
-    if (!parentId) return;
-
-    if (!replyMap.has(parentId)) {
-      replyMap.set(parentId, []);
-    }
-
-    replyMap.get(parentId).push(reply);
+  records.forEach(comment => {
+    const id = String(comment.commentId || comment.id || '');
+    if (id) byId.set(id, { ...comment, replies: [] });
   });
 
-  return parents.map(parent => {
-    const ownReplies = replyMap.get(
-      String(parent.commentId || '')
-    ) || [];
+  records.forEach(comment => {
+    const id = String(comment.commentId || comment.id || '');
+    const parentId = String(comment.parentId || '');
 
-    ownReplies.sort((a, b) => {
-      return new Date(a.commentCreatedAt || 0).getTime() -
-        new Date(b.commentCreatedAt || 0).getTime();
-    });
+    if (!id || !parentId || !byId.has(parentId)) return;
 
-    return {
-      ...parent,
-      replies: ownReplies
-    };
+    if (!children.has(parentId)) children.set(parentId, []);
+    children.get(parentId).push(id);
   });
+
+  const sortByDate = (a, b) => {
+    const aTime = new Date(a.commentCreatedAt || a.createdAt || 0).getTime();
+    const bTime = new Date(b.commentCreatedAt || b.createdAt || 0).getTime();
+    return aTime - bTime;
+  };
+
+  function attachReplies(comment, visited = new Set()) {
+    const id = String(comment.commentId || comment.id || '');
+    if (visited.has(id)) return comment;
+    visited.add(id);
+
+    const childIds = children.get(id) || [];
+
+    comment.replies = childIds
+      .map(childId => byId.get(childId))
+      .filter(Boolean)
+      .sort(sortByDate)
+      .map(child => attachReplies(child, new Set(visited)));
+
+    return comment;
+  }
+
+  const roots = records
+    .filter(comment => {
+      const parentId = String(comment.parentId || '');
+      return comment.isReply !== true || !parentId || !byId.has(parentId);
+    })
+    .map(comment => byId.get(String(comment.commentId || comment.id || '')))
+    .filter(Boolean)
+    .sort(sortByDate);
+
+  return roots.map(root => attachReplies(root));
 }
 
 // ========================================
@@ -534,32 +617,32 @@ function groupComments(comments) {
 
 function renderReply(reply) {
   const source = getReplySource(reply);
+  const nestedReplies = Array.isArray(reply.replies) ? reply.replies : [];
 
   return `
-    <article class="fb-comment-reply">
-
+    <article
+      class="fb-comment-reply ${nestedReplies.length ? 'has-nested-replies' : ''}"
+      style="margin:8px 0 0 20px;padding-left:12px;border-left:2px solid var(--fb-border-color, #dfe3e8);"
+    >
       <div class="fb-comment-reply-header">
-
-        <strong>
-          ${escapeHtml(reply.authorName || source)}
-        </strong>
-
+        <strong>${escapeHtml(reply.authorName || source)}</strong>
         <span class="fb-comment-source ${getReplySourceClass(reply)}">
           ${escapeHtml(source)}
         </span>
-
-        <time>
-          ${escapeHtml(formatDate(
-    reply.commentCreatedAt || reply.createdAt
-  ))}
-        </time>
-
+        <time>${escapeHtml(formatDate(
+          reply.commentCreatedAt || reply.createdAt
+        ))}</time>
       </div>
 
       <p class="fb-comment-message">
         ${escapeHtml(reply.message || 'No reply text available.')}
       </p>
 
+      ${nestedReplies.length ? `
+        <div class="fb-comment-replies fb-comment-replies-nested">
+          ${nestedReplies.map(renderReply).join('')}
+        </div>
+      ` : ''}
     </article>
   `;
 }
@@ -569,22 +652,12 @@ function renderReply(reply) {
 // ========================================
 
 function renderReplyHistory(comment) {
-  const replies = Array.isArray(comment.replies)
-    ? comment.replies
-    : [];
+  const replies = Array.isArray(comment.replies) ? comment.replies : [];
+  const latestReplyId = String(comment.latestReplyId || '');
+  const hasLatestReply = Boolean(comment.latestReplyMessage);
 
-  const latestReplyId = String(
-    comment.latestReplyId || ''
-  );
-
-  const hasLatestReply = Boolean(
-    comment.latestReplyMessage
-  );
-
-  // The latest reply may already be present
-  // in the individual reply records.
   const hasLatestInList = replies.some(
-    reply => String(reply.commentId) === latestReplyId
+    reply => String(reply.commentId || reply.id) === latestReplyId
   );
 
   let html = '';
@@ -592,13 +665,8 @@ function renderReplyHistory(comment) {
   if (replies.length) {
     html += `
       <div class="fb-comment-replies">
-
-        <h4>
-          Reply History (${replies.length})
-        </h4>
-
+        <h4>Replies (${replies.length})</h4>
         ${replies.map(renderReply).join('')}
-
       </div>
     `;
   }
@@ -612,34 +680,23 @@ function renderReplyHistory(comment) {
           : 'Facebook Page',
 
       replySource: comment.latestReplySource,
-      authorType: comment.latestReplySource === 'page'
-        ? 'page'
-        : '',
-
+      authorType: comment.latestReplySource === 'page' ? 'page' : '',
       message: comment.latestReplyMessage,
-      commentCreatedAt: comment.latestReplyAt
+      commentCreatedAt: comment.latestReplyAt,
+      replies: []
     };
 
     html += `
       <div class="fb-comment-replies">
-
         <h4>Latest Reply</h4>
-
         ${renderReply(latest)}
-
       </div>
     `;
   }
 
-  if (!html) {
-    return `
-      <p class="fb-comment-no-reply">
-        No recorded replies yet.
-      </p>
-    `;
-  }
-
-  return html;
+  return html || `
+    <p class="fb-comment-no-reply">No replies yet.</p>
+  `;
 }
 
 // ========================================
@@ -647,134 +704,56 @@ function renderReplyHistory(comment) {
 // ========================================
 
 function renderCommentCard(comment) {
-  const commentId = String(
-    comment.commentId || ''
-  );
-
+  const commentId = String(comment.commentId || comment.id || '');
   const isDeleted = comment.status === 'deleted';
-
-  const postUrl = comment.postUrl ||
-    (comment.postId
-      ? `https://www.facebook.com/${encodeURIComponent(comment.postId)}`
-      : '');
 
   return `
     <article
-      class="fb-comment-card"
+      class="fb-comment-card fb-thread-comment"
       data-fb-comment-card="${escapeHtml(commentId)}"
     >
-
       <header class="fb-comment-card-header">
-
         <div class="fb-comment-author">
-
-          <strong>
-            ${escapeHtml(comment.authorName || 'Facebook User')}
-          </strong>
-
+          <strong>${escapeHtml(comment.authorName || 'Facebook User')}</strong>
           <span class="fb-muted">
-            ${escapeHtml(formatDate(
-    comment.commentCreatedAt
-  ))}
+            ${escapeHtml(formatDate(comment.commentCreatedAt || comment.createdAt))}
           </span>
-
         </div>
-
-        <span class="fb-comment-status ${isDeleted
-      ? 'is-deleted'
-      : 'is-active'}">
+        <span class="fb-comment-status ${isDeleted ? 'is-deleted' : 'is-active'}">
           ${isDeleted ? 'Deleted' : 'Active'}
         </span>
-
       </header>
 
-      <div class="fb-comment-meta">
-
-        <div>
-          <span>Facebook Page</span>
-          <strong>
-            ${escapeHtml(comment.pageName || 'Unknown Page')}
-          </strong>
-        </div>
-
-        <div>
-          <span>Product</span>
-          <strong>
-            ${escapeHtml(comment.productName || 'Unlinked Post')}
-          </strong>
-        </div>
-
-        <div>
-          <span>Product SKU</span>
-          <strong>
-            ${escapeHtml(comment.productSku || 'N/A')}
-          </strong>
-        </div>
-
-        <div>
-          <span>Post ID</span>
-          <code>${escapeHtml(comment.postId || 'N/A')}</code>
-        </div>
-
-      </div>
-
-      <section class="fb-comment-original">
-
-        <h4>Customer Comment</h4>
-
-        <p class="fb-comment-message">
-          ${escapeHtml(comment.message || 'No comment text available.')}
-        </p>
-
-      </section>
+      <p class="fb-comment-message">
+        ${escapeHtml(comment.message || 'No comment text available.')}
+      </p>
 
       ${renderReplyHistory(comment)}
-
-      ${postUrl ? `
-        <div class="fb-comment-post-link">
-          <a
-            href="${escapeHtml(postUrl)}"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Open Related Facebook Post
-          </a>
-        </div>
-      ` : ''}
 
       ${!isDeleted ? `
         <form
           class="fb-comment-reply-form"
           data-fb-comment-reply-form="${escapeHtml(commentId)}"
         >
-
-          <label>
-            Reply from Admin Dashboard
-          </label>
-
+          <label>Reply to ${escapeHtml(comment.authorName || 'customer')}</label>
           <textarea
-            rows="3"
+            rows="2"
             maxlength="10000"
             required
-            placeholder="Write your Facebook reply..."
+            placeholder="Write your reply..."
             data-fb-comment-reply-message
           ></textarea>
-
           <div class="fb-comment-reply-actions">
-
             <button
               type="submit"
               class="fb-button fb-button-primary"
               data-fb-comment-reply-submit
             >
-              Send Reply
+              Reply
             </button>
-
           </div>
-
         </form>
       ` : ''}
-
     </article>
   `;
 }
@@ -784,31 +763,87 @@ function renderCommentCard(comment) {
 // ========================================
 
 function renderCommentList(root, comments) {
-  const container = root.querySelector(
+  const globalContainer = root.querySelector(
     '[data-fb-comments-list]'
   );
 
-  if (!container) return;
+  const postsContainer = root.querySelector(
+    '[data-fb-page-posts]'
+  );
+
+  const postTargets = postsContainer
+    ? [...postsContainer.querySelectorAll('[data-fb-post-comments]')]
+    : [];
+
+  postTargets.forEach(target => {
+    const content = target.querySelector('.fb-post-comments-content');
+
+    if (content) {
+      content.innerHTML = '<p class="fb-muted">No comments loaded.</p>';
+    }
+  });
 
   const grouped = groupComments(comments);
+  const commentsByPost = new Map();
 
-  if (!grouped.length) {
-    container.innerHTML = `
-      <div class="fb-empty-state">
-        <h3>No Facebook Comments Found</h3>
+  grouped.forEach(comment => {
+    const postId = String(comment.postId || '');
 
-        <p>
-          No comments match the selected filters.
-        </p>
-      </div>
-    `;
+    if (!postId) return;
 
-    return;
+    if (!commentsByPost.has(postId)) {
+      commentsByPost.set(postId, []);
+    }
+
+    commentsByPost.get(postId).push(comment);
+  });
+
+  let renderedInline = false;
+
+  postTargets.forEach(target => {
+    const postId = String(target.dataset.fbPostComments || '');
+    const content = target.querySelector('.fb-post-comments-content');
+    const postComments = commentsByPost.get(postId) || [];
+
+    if (!content) return;
+
+    if (postComments.length) {
+      content.innerHTML = postComments.map(renderCommentCard).join('');
+      renderedInline = true;
+
+    } else if (
+      String(target.closest('[data-fb-post-card]')?.dataset.fbPostCard) ===
+      String(root.__fbSelectedPostId || '')
+    ) {
+      content.innerHTML = `
+        <div class="fb-empty-state">
+          <p>No customer comments found for this post.</p>
+        </div>
+      `;
+    }
+  });
+
+  if (globalContainer) {
+    if (renderedInline) {
+      globalContainer.hidden = true;
+      globalContainer.innerHTML = '';
+
+    } else {
+      globalContainer.hidden = false;
+
+      if (!grouped.length) {
+        globalContainer.innerHTML = `
+          <div class="fb-empty-state">
+            <h3>No Facebook Comments Found</h3>
+            <p>No comments match the selected filters.</p>
+          </div>
+        `;
+
+      } else {
+        globalContainer.innerHTML = grouped.map(renderCommentCard).join('');
+      }
+    }
   }
-
-  container.innerHTML = grouped.map(
-    renderCommentCard
-  ).join('');
 }
 
 // ========================================
@@ -865,10 +900,15 @@ async function loadComments(root, state) {
       getCommentFilters(root, state)
     );
 
-
     state.comments = Array.isArray(result?.comments)
-      ? result.comments
+      ? result.comments.map(comment => ({
+          ...comment,
+          pageId: comment.pageId || state.selectedPageId || '',
+          postId: comment.postId || state.selectedPostId || ''
+        }))
       : [];
+
+    root.__fbSelectedPostId = state.selectedPostId || '';
 
     renderCommentList(root, state.comments);
 
@@ -1144,49 +1184,47 @@ export function renderFacebookComments() {
 
       </article>
 
-<!-- Facebook Page Posts -->
+      <!-- Facebook Page Posts -->
 
-<article class="fb-card fb-post-feed-section">
+      <article class="fb-card fb-post-feed-section">
 
-  <header class="fb-card-heading">
-    <div>
-      <h3>Facebook Page Posts</h3>
-      <p class="fb-muted">
-        Select a post to load its customer comments and replies.
-      </p>
-    </div>
-  </header>
+        <header class="fb-card-heading">
+          <div>
+            <h3>Facebook Page Posts</h3>
+            <p class="fb-muted">
+              Select a post to load its customer comments and replies.
+            </p>
+          </div>
+        </header>
 
-  <div class="fb-form-actions">
-    <button
-      type="button"
-      class="fb-button fb-button-primary"
-      data-fb-posts-refresh
-    >
-      Load Recent Posts
-    </button>
-  </div>
+        <div class="fb-form-actions">
+          <button
+            type="button"
+            class="fb-button fb-button-primary"
+            data-fb-posts-refresh
+          >
+            Load Recent Posts
+          </button>
+        </div>
 
-  <div
-    class="fb-post-feed-list"
-    data-fb-page-posts
-  >
-    <p class="fb-muted">
-      Click Load Recent Posts to see your Facebook Page posts.
-    </p>
-  </div>
+        <div
+          class="fb-post-feed-list"
+          data-fb-page-posts
+        >
+          <p class="fb-muted">
+            Click Load Recent Posts to see your Facebook Page posts.
+          </p>
+        </div>
 
-</article>
+      </article>
 
       <div
         class="fb-comments-list"
         data-fb-comments-list
       >
-
         <div class="fb-empty-state">
           Loading Facebook comments...
         </div>
-
       </div>
 
       <p
@@ -1231,11 +1269,10 @@ export function bindFacebookCommentsEvents(root = document) {
   ) {
     refreshButton.dataset.bound = 'true';
 
-   refreshButton.addEventListener('click', () => {
-  syncRecentPageComments(root, state);
-});
+    refreshButton.addEventListener('click', () => {
+      syncRecentPageComments(root, state);
+    });
   }
-
 
   // Load Facebook Page Posts.
 
@@ -1262,14 +1299,17 @@ export function bindFacebookCommentsEvents(root = document) {
     });
   }
 
-  // Select a post and sync its comments.
+  // Select a post and open its comments inline (no page jump).
 
   const postsContainer = root.querySelector(
     '[data-fb-page-posts]'
   );
 
-  if (postsContainer && !postsContainer.dataset.bound) {
-    postsContainer.dataset.bound = 'true';
+  if (
+    postsContainer &&
+    !postsContainer.dataset.postCommentsBound
+  ) {
+    postsContainer.dataset.postCommentsBound = 'true';
 
     postsContainer.addEventListener('click', async event => {
       const button = event.target.closest(
@@ -1280,6 +1320,18 @@ export function bindFacebookCommentsEvents(root = document) {
 
       const pageId = button.dataset.fbCommentPostPage;
       const postId = button.dataset.fbCommentPostOpen;
+      const postCard = button.closest('[data-fb-post-card]');
+
+      const inlineSection = postCard?.querySelector(
+        `[data-fb-post-comments="${CSS.escape(String(postId))}"]`
+      );
+
+      if (inlineSection && !inlineSection.hidden) {
+        inlineSection.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+        button.textContent = 'View Comments & Reply';
+        return;
+      }
 
       button.disabled = true;
       button.textContent = 'Loading Comments...';
@@ -1291,6 +1343,12 @@ export function bindFacebookCommentsEvents(root = document) {
           pageId,
           postId
         );
+
+        if (inlineSection) inlineSection.hidden = false;
+
+        button.setAttribute('aria-expanded', 'true');
+        button.textContent = 'Hide Comments';
+
       } catch (error) {
         console.error('[FACEBOOK POST COMMENTS]', error);
 
@@ -1299,9 +1357,9 @@ export function bindFacebookCommentsEvents(root = document) {
           error.message || 'Failed to load post comments.',
           'error'
         );
+
       } finally {
         button.disabled = false;
-        button.textContent = 'View Comments & Reply';
       }
     });
   }
@@ -1323,16 +1381,19 @@ export function bindFacebookCommentsEvents(root = document) {
     });
   }
 
-  // Submit reply forms using event delegation.
+  // Reply forms live inside each post card, so delegate from posts container.
 
-  const list = root.querySelector(
-    '[data-fb-comments-list]'
-  );
+  const replyFormHost = root.querySelector(
+    '[data-fb-page-posts]'
+  ) || root;
 
-  if (list && !list.dataset.replyBound) {
-    list.dataset.replyBound = 'true';
+  if (
+    replyFormHost &&
+    !replyFormHost.dataset.replyBound
+  ) {
+    replyFormHost.dataset.replyBound = 'true';
 
-    list.addEventListener('submit', event => {
+    replyFormHost.addEventListener('submit', event => {
       const form = event.target;
 
       if (
@@ -1357,12 +1418,14 @@ export function bindFacebookCommentsEvents(root = document) {
     });
   }
 
-
   const pageFilter = root.querySelector(
     '[data-fb-comments-page]'
   );
 
-  if (pageFilter && !pageFilter.dataset.postFilterBound) {
+  if (
+    pageFilter &&
+    !pageFilter.dataset.postFilterBound
+  ) {
     pageFilter.dataset.postFilterBound = 'true';
 
     pageFilter.addEventListener('change', () => {
@@ -1372,6 +1435,7 @@ export function bindFacebookCommentsEvents(root = document) {
       loadComments(root, state);
     });
   }
+
   // Load selected Pages and initial comments.
 
   loadCommentPages(root, state).then(() => {
