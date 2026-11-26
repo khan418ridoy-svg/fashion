@@ -18,9 +18,6 @@ const {
   getSelectedPageToken
 } = require('./facebook.connection.service');
 
-const {
-  recordOutgoingReply
-} = require('./facebook.engagement.service');
 
 const {
   recordOutgoingReply,
